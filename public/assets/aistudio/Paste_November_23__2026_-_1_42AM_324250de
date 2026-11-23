@@ -1,0 +1,2189 @@
+# LOSSLESS PLAYER v3
+# MASTER IMPLEMENTATION PROMPT
+# GIAI DOAN 2 - LIBRARY, PLAYLIST, QUEUE & LISTENING DATA
+
+**Project:** Lossless Player  
+**Platform:** Windows Desktop  
+**Current technology:** Electron + React + TypeScript + SQLite  
+**Development approach:** Incremental, Test-Driven, Non-Destructive  
+**Document type:** Implementation Contract  
+**Priority:** Data Integrity > Audio Stability > Functional Correctness > Performance > Visual Polish
+
+---
+
+# PHAN 0. VAI TRO VA QUY TAC BAT BUOC
+
+Bạn là Senior Software Architect, Electron Engineer, TypeScript Engineer, SQLite Database Engineer và Software QA Engineer.
+
+Bạn được giao tiếp tục phát triển project Lossless Player đã tồn tại.
+
+ĐÂY KHÔNG PHẢI DỰ ÁN MỚI.
+
+Bạn không được viết lại ứng dụng từ đầu.
+
+Bạn không được thay đổi kiến trúc hoặc thư viện đang hoạt động nếu chưa chứng minh được sự cần thiết.
+
+Bạn phải đọc source code thực tế trước khi sửa.
+
+Người dùng không có nhiều kinh nghiệm lập trình. Mọi hướng dẫn thao tác phải cụ thể, chính xác, bằng tiếng Việt.
+
+Bạn phải phân biệt rõ:
+
+- CONFIRMED: Đã có bằng chứng hoạt động.
+- IMPLEMENTED BUT UNVERIFIED: Có code nhưng chưa được kiểm thử.
+- MISSING: Chưa được triển khai.
+- BROKEN: Có bằng chứng lỗi.
+- BLOCKED: Không thể kiểm thử vì thiếu điều kiện.
+
+Tuyệt đối không đánh đồng "có source code" với "đã hoạt động".
+
+## 0.1. Quy tắc phát triển
+
+1. Chỉ làm đúng phạm vi Giai đoạn 2.
+2. Chỉ thực hiện một tiểu mốc mỗi lần.
+3. Không chuyển sang tiểu mốc tiếp theo khi chưa được người dùng xác nhận.
+4. Không sửa những phần không liên quan.
+5. Không xóa hoặc ghi đè dữ liệu người dùng.
+6. Không tự ý tạo project mới.
+7. Không tự ý thay AudioEngine.
+8. Không đưa dữ liệu lên cloud.
+9. Không yêu cầu Internet khi sử dụng.
+10. Không thêm tính năng ngoài đặc tả.
+11. Không dùng mock để giả vờ chức năng production đã hoạt động.
+12. Không báo PASS cho test chưa chạy.
+13. Không tự ý thay đổi appId, userData path, database name hoặc database schema mà không phân tích tác động.
+14. Không dùng lối sửa lỗi bằng cách xóa database hoặc cài lại ứng dụng.
+15. Mọi thay đổi phải có khả năng rollback.
+
+Nếu phát hiện bất kỳ yêu cầu nào mâu thuẫn với source thực tế hoặc các yêu cầu đã chốt, hãy dừng tại phần liên quan, trình bày bằng chứng và đề xuất phương án ít rủi ro nhất.
+
+Không tự suy diễn rằng được phép thay đổi toàn bộ kiến trúc.
+
+---
+
+# PHAN 1. HIEN TRANG DU AN
+
+## 1.1. Công nghệ hiện tại
+
+Theo thông tin được người dùng cung cấp, project hiện sử dụng:
+
+- Electron.
+- React.
+- TypeScript.
+- electron-vite hoặc Vite.
+- SQLite thông qua better-sqlite3.
+- music-metadata.
+- HTMLAudioElement.
+- Custom local media protocol.
+- Electron Builder cho đóng gói dự kiến.
+
+Đây là thông tin bối cảnh.
+
+Bạn phải xác minh lại trong source code thực tế.
+
+Không được coi danh sách trên là bằng chứng rằng mọi thành phần đã được triển khai hoàn chỉnh.
+
+## 1.2. Những gì người dùng đã xác nhận
+
+Bản v1 hiện tại:
+
+- Có thể khởi động ứng dụng Electron trên Windows.
+- Có thể import nhạc local.
+- Có thể phát file FLAC.
+- Chất lượng âm thanh nghe thực tế đã đạt yêu cầu.
+- Đã vượt qua một số lỗi khởi động trước đây.
+
+## 1.3. Những gì chưa được xác nhận
+
+- SQLite persistence sau khi khởi động lại.
+- Database migration.
+- Import thư mục hoàn chỉnh.
+- Chống import trùng.
+- Xử lý file mất hoặc di chuyển.
+- Playlist.
+- Favorites.
+- Queue persistence.
+- Shuffle.
+- Repeat.
+- Listening history.
+- Khôi phục vị trí phát.
+- Windows media controls.
+- Các bài test database và library-service.
+
+Đặc biệt:
+
+**Fade In và Fade Out CHƯA ĐƯỢC TRIỂN KHAI.**
+
+Không được tự nhận bản v1 đã có Fade.
+
+Không triển khai Fade trong Giai đoạn 2.
+
+Nếu bản v1 đã có một số chức năng khác, chỉ xác nhận khi tìm thấy source và kiểm thử được.
+
+---
+
+# PHAN 2. PHAM VI CHINH THUC CUA GIAI DOAN 2
+
+Giai đoạn 2 gồm đúng 6 tiểu mốc:
+
+- M2.1: SQLite Persistence & Library Restoration.
+- M2.2: Deduplication, Missing Files & Safe Removal.
+- M2.3: Vietnamese Search, Sorting & Filtering.
+- M2.4: Playlist, Favorites, Queue, Shuffle & Repeat.
+- M2.5: Raw Listening History & Listening Sessions.
+- M2.6: Integration Testing, Regression & Final Acceptance.
+
+Không tự thay đổi thứ tự này.
+
+Mỗi tiểu mốc có điều kiện nghiệm thu độc lập.
+
+## 2.1. Những tính năng được phép triển khai
+
+- Lưu danh sách bài hát.
+- Import file và thư mục.
+- Lưu đường dẫn và metadata.
+- Khôi phục thư viện sau khi đóng mở.
+- Stable Track ID.
+- Chống import trùng.
+- Đánh dấu file không tìm thấy.
+- Xóa mềm bài khỏi thư viện.
+- Tìm kiếm tiếng Việt không dấu.
+- Sắp xếp và lọc.
+- Playlist.
+- Favorites.
+- Queue.
+- Shuffle.
+- Repeat Off/One/All.
+- Lưu trạng thái queue và các chế độ phát.
+- Thu thập dữ liệu nghe nhạc thực tế.
+- Kiểm thử dữ liệu và hồi quy.
+
+## 2.2. Những tính năng tuyệt đối không triển khai ở Giai đoạn 2
+
+- Fade In/Out.
+- Crossfade.
+- Gapless Playback.
+- Equalizer.
+- ReplayGain.
+- Bass Boost.
+- DSP.
+- Lyrics LRC/TXT.
+- Chỉnh metadata hiển thị.
+- Ảnh bìa tùy chỉnh.
+- Vinyl Turntable.
+- Animation thay đĩa.
+- Spatial Glassmorphism redesign.
+- Dynamic Album Colors.
+- Premium Home.
+- Editorial Playlist Gallery.
+- 3D Album Coverflow.
+- Statistics Dashboard.
+- Tự theo dõi thư mục bằng file watcher.
+- Sleep Timer.
+- File Association trong Explorer.
+- Full Backup/Restore Export.
+- Đóng gói EXE cuối cùng.
+
+Các tính năng trên thuộc những giai đoạn khác.
+
+Giai đoạn 2 có thể tạo cấu trúc dữ liệu tương thích với chúng nhưng không được tự triển khai giao diện hoặc logic nâng cao ngoài phạm vi.
+
+---
+
+# PHAN 3. CAC QUYET DINH v3 DA CHOT
+
+Những quyết định dưới đây là yêu cầu bắt buộc, không được tự thay đổi.
+
+## 3.1. Audio
+
+Người dùng nghe bằng tai nghe thông thường.
+
+- Dùng Chromium audio engine bên trong Electron.
+- Không yêu cầu WASAPI Exclusive.
+- Không yêu cầu bit-perfect.
+- Không yêu cầu DAC chuyên dụng.
+- Không tự thay AudioEngine vì các yêu cầu audio không còn áp dụng.
+- Fade sẽ triển khai ở một tác vụ riêng.
+- Không xây logic có chủ đích ngăn cản việc bổ sung gapless trong tương lai.
+
+## 3.2. Cách lưu nhạc
+
+Khi import:
+
+- Giữ nguyên file nhạc ở thư mục nguồn.
+- Không di chuyển file.
+- Không sao chép file nhạc vào thư mục ứng dụng.
+- Không sửa tag trong file.
+- Không chuyển đổi định dạng.
+- Không encode lại nhạc.
+
+Chỉ lưu metadata, đường dẫn và thông tin cần thiết trong SQLite.
+
+## 3.3. Stable Track ID
+
+Mỗi bài hát được tạo một Track ID ổn định.
+
+Track ID:
+
+- Không phụ thuộc vào tên bài.
+- Không phụ thuộc vào nghệ sĩ.
+- Không phụ thuộc vào album.
+- Không bị thay đổi chỉ vì metadata được cập nhật.
+- Không bị thay đổi khi ứng dụng restart.
+- Không bị tái tạo khi import lại cùng bài đã tồn tại.
+- Được dùng để liên kết playlist, favorites, queue và lịch sử nghe.
+
+Không sử dụng title làm primary key.
+
+Không sử dụng tên file làm primary key.
+
+Đường dẫn chuẩn hóa chỉ là khóa nhận diện import trùng, không thay thế Stable Track ID.
+
+## 3.4. Quy tắc tính một lượt nghe
+
+Một phiên nghe được tính là một lượt hợp lệ khi:
+
+- Bài có thời lượng từ 60 giây trở lên: nghe thực tế ít nhất 30 giây.
+- Bài có thời lượng dưới 60 giây: nghe thực tế ít nhất 50% thời lượng bài.
+
+Ví dụ:
+
+- Bài 20 giây: ngưỡng 10 giây.
+- Bài 40 giây: ngưỡng 20 giây.
+- Bài 59 giây: ngưỡng 29,5 giây.
+- Bài 60 giây: ngưỡng 30 giây.
+- Bài 240 giây: ngưỡng 30 giây.
+
+Mỗi phiên nghe chỉ được tính tối đa một qualified play.
+
+Không cộng lượt nghe vì người dùng chỉ mở bài.
+
+Không cộng lượt nghe nếu chưa đạt ngưỡng.
+
+Không cộng nhiều lượt trong cùng một phiên chỉ vì người dùng tua lại.
+
+Một phiên mới được tạo khi bài thực sự được khởi phát lại như một lượt phát mới, không phải mỗi lần Pause/Resume.
+
+## 3.5. Xóa bài nhưng giữ lịch sử
+
+Khi người dùng chọn Remove from Library:
+
+- Không xóa file âm thanh gốc.
+- Không xóa listening history.
+- Không xóa thống kê liên quan.
+- Không được dùng cascade delete để xóa dữ liệu nghe.
+- Bài phải chuyển sang trạng thái đã xóa khỏi thư viện.
+
+Các báo cáo tương lai hiển thị lịch sử bài đó dưới nhóm:
+
+"Bài đã xóa"
+
+Nếu người dùng import lại đúng bài đã xóa và hệ thống nhận diện được an toàn, ưu tiên khôi phục bản ghi cũ cùng Track ID.
+
+Không tạo bài mới làm tách lịch sử nếu có thể tái sử dụng an toàn bản ghi cũ.
+
+## 3.6. Vinyl và artwork
+
+Đã chốt cho giai đoạn sau:
+
+- Nhãn tròn ở tâm đĩa than sử dụng ảnh bìa bài hát.
+- Đĩa và nhãn quay cùng nhau.
+- Khi thay bài, đĩa cũ được nhấc khỏi mâm, mâm trống xuất hiện, sau đó đĩa mới được đặt xuống.
+
+Giai đoạn 2 không được triển khai Vinyl UI.
+
+Chỉ cần đảm bảo dữ liệu bài hát có Track ID ổn định để liên kết artwork trong tương lai.
+
+## 3.7. Quy tắc UI
+
+Đã chốt:
+
+- Playlist Selection: Editorial Spatial Gallery với portrait cards.
+- Album Selection: Square Artwork + 3D Coverflow.
+- Songs: List View.
+- Now Playing: Vinyl + Lyrics.
+- Mini Player: Floating Glass Pill.
+- Visual language: Spatial Glassmorphism + Dynamic Album Colors.
+
+Không được thay đổi UI hiện tại theo những thiết kế này trong Giai đoạn 2.
+
+Chỉ làm UI chức năng tối thiểu cần để kiểm thử Library, Playlist, Queue và Search.
+
+---
+
+# PHAN 4. QUY TRINH TIEP NHAN SOURCE
+
+Trước khi viết code, yêu cầu hoặc đọc các tài liệu:
+
+1. Source project ZIP.
+2. package.json.
+3. Lockfile đang sử dụng.
+4. Electron configuration.
+5. Main process.
+6. Preload process.
+7. Renderer process.
+8. AudioEngine.
+9. Media protocol.
+10. Database initialization.
+11. Migrations.
+12. Library Service.
+13. IPC handlers.
+14. Existing test files.
+15. Test logs nếu có.
+
+Không cần người dùng cung cấp node_modules nếu project có thể cài dependency từ lockfile.
+
+Không yêu cầu tải hoặc gửi các file chứa password, token, private key hoặc dữ liệu bí mật.
+
+## 4.1. Audit bắt buộc
+
+Xác định chính xác:
+
+- Source directory structure.
+- Database filename.
+- Database storage location.
+- Schema hiện tại.
+- Existing migration version.
+- Library import workflow.
+- Library restore workflow.
+- Playback state ownership.
+- IPC contracts.
+- Audio protocol handling.
+- Current test scripts.
+- Current build scripts.
+
+Không tự giả định đường dẫn `src/main/database` hay tên bảng `tracks` nếu source thực tế khác.
+
+Nếu kiến trúc hiện tại có cơ chế tốt hơn đề xuất, ưu tiên giữ cơ chế đang hoạt động, miễn đáp ứng các bất biến và acceptance tests.
+
+## 4.2. Kết quả audit
+
+Trả về:
+
+- Những chức năng đã có.
+- Những chức năng chưa có.
+- Những chức năng đang lỗi.
+- Những file có liên quan.
+- Những rủi ro dữ liệu.
+- Những rủi ro với audio.
+- Kế hoạch M2.1.
+- Cách backup.
+- Cách rollback.
+
+DỪNG tại đây để người dùng kiểm tra trước khi sửa code.
+
+---
+
+# PHAN 5. CAC BAT BIEN KIEN TRUC
+
+Mọi tiểu mốc phải giữ những bất biến sau.
+
+## 5.1. AudioEngine
+
+- Chỉ có một nguồn quản lý playback chính.
+- Không tạo một AudioEngine mới cho mỗi màn hình.
+- Không reset bài đang phát chỉ vì người dùng chuyển trang.
+- Không làm lại custom media protocol nếu không có bằng chứng lỗi trực tiếp.
+- Không thay decoder.
+- Không chỉnh sample rate.
+- Không can thiệp EQ.
+- Không thay đổi nguồn phát local nếu không cần.
+
+Các chức năng Queue, Shuffle và Repeat chỉ điều khiển việc lựa chọn bài cần phát thông qua interface playback hiện có.
+
+Nếu interface hiện tại thiếu khả năng cần thiết, đề xuất bổ sung nhỏ nhất có thể, thay vì viết lại AudioEngine.
+
+## 5.2. SQLite
+
+Database phải lưu tại đường dẫn dữ liệu ứng dụng phù hợp với Electron.
+
+Ưu tiên sử dụng cơ chế `app.getPath("userData")` hiện có nếu source đang áp dụng.
+
+Không lưu database tại:
+
+- Thư mục source code.
+- Thư mục node_modules.
+- Thư mục build output.
+- Thư mục Windows System32.
+- Thư mục tạm có thể bị xóa.
+
+Không thay đổi appId hoặc đường dẫn userData hiện tại mà không có migration và phương án bảo toàn dữ liệu.
+
+## 5.3. Data Integrity
+
+- Sử dụng foreign key thích hợp.
+- Bật kiểm tra foreign key nếu chưa có.
+- Sử dụng transaction cho các thay đổi liên quan nhiều bảng.
+- Không dùng cascade delete cho raw listening history.
+- Không xóa track chỉ vì file mất.
+- Không xóa playlist hoặc favorite khi file thiếu.
+- Không tạo trùng UUID.
+- Không tạo trùng khóa đường dẫn chuẩn hóa của các bản ghi đang hoạt động.
+- Migration phải được version hóa.
+- Migration phải có khả năng phát hiện lỗi và rollback khi phù hợp.
+
+## 5.4. IPC
+
+Dữ liệu từ Renderer đi qua IPC đã được kiểm soát.
+
+- Validate input.
+- Không cho Renderer thực thi SQL tùy ý.
+- Không đưa database connection trực tiếp vào Renderer.
+- Không bật các tùy chọn Electron nguy hiểm chỉ để làm nhanh.
+- Không cung cấp quyền truy cập filesystem không giới hạn cho UI.
+- Không truyền những đường dẫn chưa được kiểm tra đến media protocol.
+
+## 5.5. Offline
+
+Tất cả chức năng Mốc 2 phải hoạt động offline.
+
+Không thêm:
+
+- API account.
+- Analytics server.
+- Telemetry.
+- Sync service.
+- External metadata provider.
+- Streaming API.
+
+---
+
+# PHAN 6. DATA MODEL - HOP DONG DU LIEU
+
+Đây là mô hình logic cần đạt, không phải lệnh bắt buộc phải xóa database cũ để tạo lại đúng tên bảng.
+
+Bạn phải đối chiếu schema hiện tại trước.
+
+Tên bảng có thể giữ nguyên theo source nếu hợp lý.
+
+Tuy nhiên, quan hệ và hành vi dữ liệu phải tương đương.
+
+## 6.1. Tracks
+
+Mỗi bản ghi đại diện cho một bài hát trong hệ thống.
+
+Các trường logic cần có:
+
+- track_id: UUID ổn định, unique, không null.
+- original_path: đường dẫn sử dụng để mở file.
+- normalized_path_key: khóa chuẩn hóa để chống trùng.
+- original_title.
+- original_artist.
+- original_album.
+- duration_ms hoặc duration_seconds với quy ước nhất quán.
+- format hoặc codec nếu đã có.
+- file_size nếu đã có.
+- date_added.
+- last_seen_at.
+- availability_status.
+- library_status.
+- deleted_at nếu đã bị xóa khỏi thư viện.
+
+Trường metadata kỹ thuật khác được giữ nguyên nếu đã tồn tại.
+
+Không tự làm mất các trường đang được AudioEngine hoặc UI sử dụng.
+
+### Availability Status
+
+Các trạng thái logic:
+
+- AVAILABLE.
+- MISSING.
+- UNSUPPORTED nếu nguồn không thể phát bằng engine.
+- ERROR nếu lỗi khác đã được xác định.
+
+Nếu source đã có enum khác, không tạo hai hệ thống trạng thái song song.
+
+### Library Status
+
+- ACTIVE.
+- REMOVED.
+
+ACTIVE/MISSING là bài vẫn thuộc thư viện nhưng file hiện không truy cập được.
+
+REMOVED là bài người dùng chủ động xóa khỏi danh sách thư viện.
+
+Hai khái niệm này tuyệt đối không được gộp làm một.
+
+## 6.2. Music Folder Roots
+
+Có thể lưu:
+
+- root_id.
+- folder_path.
+- date_added.
+- last_scan_at.
+
+Dữ liệu này phục vụ import thư mục và khả năng theo dõi thư mục trong tương lai.
+
+Giai đoạn 2 chưa được cài đặt file watcher.
+
+Không tự khởi chạy quét liên tục trong background.
+
+## 6.3. Playlists
+
+Các trường logic:
+
+- playlist_id.
+- playlist_name.
+- description nếu hỗ trợ.
+- created_at.
+- updated_at.
+
+Playlist ID phải ổn định.
+
+Tên playlist không phải khóa chính.
+
+Cho phép hai playlist có tên giống nhau nếu ứng dụng không có quy tắc cấm được người dùng xác nhận.
+
+Không tự gộp playlist chỉ vì trùng tên.
+
+## 6.4. Playlist Tracks
+
+Bảng liên kết:
+
+- playlist_id.
+- track_id.
+- position.
+- added_at.
+
+Một bài có thể tồn tại trong nhiều playlist.
+
+Trong một playlist, mặc định không thêm cùng Track ID hai lần qua thao tác Add thông thường.
+
+Nếu source đã hỗ trợ duplicate entries có chủ đích thì phải báo cáo trước khi thay đổi hành vi.
+
+Thứ tự bài phải được lưu.
+
+Khi reorder, cập nhật trong transaction.
+
+Không để hai bài có position mâu thuẫn sau khi reorder.
+
+## 6.5. Favorites
+
+Có thể lưu trong bảng riêng hoặc dưới dạng trường thuộc tracks.
+
+Yêu cầu logic:
+
+- Một Track ID có tối đa một trạng thái Favorite đang bật.
+- Bật Favorite nhiều lần không tạo bản ghi trùng.
+- Tắt Favorite không xóa bài.
+- Bài MISSING giữ Favorite.
+- Bài REMOVED giữ dữ liệu Favorite trong database để có thể phục hồi, nhưng không hiển thị như bài active thông thường.
+
+## 6.6. Queue
+
+Queue cần có:
+
+- queue_entry_id.
+- track_id.
+- position.
+- current_queue_entry hoặc current_index.
+- source_context nếu cần.
+- date_added.
+
+Cần phân biệt:
+
+- Thư viện có những bài nào.
+- Playlist nào đang được xem.
+- Những bài đang nằm trong queue.
+- Bài hiện tại của queue.
+
+Không tự đồng nhất thư viện với queue.
+
+Không tự xóa queue mỗi lần đổi trang.
+
+## 6.7. Playback Preferences
+
+Lưu:
+
+- shuffle_enabled.
+- repeat_mode: OFF / ONE / ALL.
+- Các trạng thái queue cần thiết để tiếp tục điều hướng.
+
+Nếu v1 đã có bảng settings hoặc playback_state, sử dụng và mở rộng bảng đó.
+
+Không tạo hệ thống setting trùng lặp.
+
+Volume, current track và playback position thuộc yêu cầu nhớ trạng thái tổng thể của Mốc 1.
+
+Nếu các trường này chưa hoạt động, đánh dấu rõ là tồn đọng Mốc 1. Không tự coi đã hoàn thành trong Mốc 2 chỉ vì có queue persistence.
+
+## 6.8. Listening Sessions
+
+Các trường logic:
+
+- session_id.
+- track_id.
+- started_at_utc.
+- ended_at_utc.
+- listened_ms.
+- qualified_play.
+- qualified_at_utc.
+- last_checkpoint_at_utc.
+- session_status.
+
+Không dùng tên bài làm khóa liên kết.
+
+Không cộng một phiên nghe nhiều lần khi app restart.
+
+## 6.9. Listening Time Segments
+
+Ngoài tổng thời gian mỗi session, cần lưu dữ liệu đủ chi tiết để thống kê:
+
+- Theo ngày.
+- Theo giờ trong ngày.
+- Theo tuần.
+- Theo tháng.
+- Theo khoảng ngày tùy chọn.
+
+Có thể sử dụng bảng listening_intervals hoặc một mô hình tương đương.
+
+Tối thiểu mỗi khoảng dữ liệu cần xác định:
+
+- segment_id.
+- session_id.
+- track_id nếu cần.
+- start_timestamp_utc.
+- end_timestamp_utc.
+- listened_ms.
+- checkpoint sequence hoặc khóa đảm bảo idempotency.
+
+Không chỉ lưu một tổng số giây toàn thời gian.
+
+Nếu chỉ lưu tổng mỗi bài, về sau sẽ không thể tính chính xác lịch sử theo ngày.
+
+---
+
+# PHAN 7. M2.1 - SQLITE PERSISTENCE & LIBRARY RESTORATION
+
+## 7.1. Mục tiêu
+
+Import một lần, đóng mở ứng dụng vẫn còn thư viện.
+
+Không phải import lại nhạc sau mỗi lần mở.
+
+## 7.2. Luồng import file
+
+Khi người dùng chọn một file:
+
+1. Kiểm tra file tồn tại và có thể đọc.
+2. Xác định đường dẫn gốc.
+3. Tạo normalized_path_key.
+4. Kiểm tra xem bài đã tồn tại chưa.
+5. Nếu chưa có, đọc metadata.
+6. Tạo Stable Track ID.
+7. Ghi SQLite bằng transaction phù hợp.
+8. Cập nhật thư viện hiển thị.
+9. Không sửa file gốc.
+
+Nếu đọc metadata một file bị lỗi:
+
+- Không làm crash toàn bộ import.
+- Ghi nhận lỗi cụ thể.
+- Tiếp tục xử lý các file khác nếu an toàn.
+- Không tạo bản ghi giả báo import thành công khi thực tế thất bại.
+
+## 7.3. Import thư mục
+
+Khi chọn thư mục:
+
+- Quét các file âm thanh hỗ trợ theo khả năng engine thực tế.
+- Có thể quét thư mục con.
+- Không đưa file không hỗ trợ vào danh sách như bài phát được.
+- Không xử lý vô hạn nếu gặp symbolic-link loop.
+- Không làm giao diện đóng băng khi thư mục lớn.
+- Có trạng thái progress tối thiểu.
+- Có báo cáo số file thành công, bỏ qua, lỗi.
+
+Không tự xóa dữ liệu cũ trước khi import.
+
+## 7.4. Khởi động ứng dụng
+
+Khi mở app:
+
+1. Khởi tạo database.
+2. Kiểm tra migration version.
+3. Đọc thư viện từ SQLite.
+4. Hiển thị danh sách đã lưu.
+5. Không tự quét lại toàn bộ mọi thư mục nếu không cần.
+6. Không tự động phát nhạc trừ khi chức năng auto-play đã được triển khai và được bật hợp lệ.
+
+Không yêu cầu người dùng chọn lại thư mục chỉ vì app restart.
+
+## 7.5. Stable IDs
+
+Track ID phải giữ nguyên sau:
+
+- Restart.
+- Reopen database.
+- Import lại cùng đường dẫn.
+- Sắp xếp lại thư viện.
+- Đổi cách lọc.
+
+Nếu database cũ chưa có UUID ổn định, cần migration an toàn.
+
+Không tái tạo UUID mỗi lần ứng dụng khởi động.
+
+## 7.6. Acceptance Tests
+
+M2.1 chỉ PASS khi:
+
+1. Import ít nhất 5 bài thực tế.
+2. Đóng app hoàn toàn.
+3. Mở lại.
+4. Vẫn có đủ bài.
+5. Metadata được giữ.
+6. Track ID được giữ.
+7. File FLAC vẫn phát được.
+8. Không tạo database mới ở đường dẫn khác.
+9. Không yêu cầu import lại.
+
+Kiểm tra thêm đường dẫn chứa Unicode tiếng Việt.
+
+Nếu chưa đạt, không chuyển M2.2.
+
+---
+
+# PHAN 8. M2.2 - DEDUPLICATION, MISSING FILES & SAFE REMOVAL
+
+## 8.1. Normalized Path Key
+
+Trên Windows, dùng normalized_path_key để nhận diện trùng.
+
+Quy tắc logic:
+
+1. Xác định absolute path.
+2. Chuẩn hóa dấu phân cách.
+3. Chuẩn hóa các đoạn `.` và `..`.
+4. Xử lý drive-letter và so sánh không phân biệt chữ hoa thường theo quy tắc filesystem Windows phù hợp.
+5. Chuẩn hóa Unicode một cách nhất quán cho khóa so sánh.
+6. Không sử dụng khóa đã lower-case hoặc biến đổi Unicode để trực tiếp mở file.
+
+Luôn giữ original_path để truy cập file thực tế.
+
+Không tự sửa đường dẫn gốc chỉ vì normalized key khác cách hiển thị.
+
+Nếu gặp symlink, junction hoặc UNC path, phải có quy tắc xử lý ổn định và test riêng khi source hỗ trợ.
+
+Không tự giả định mọi đường dẫn khác chuỗi ký tự đều là các file khác nhau.
+
+## 8.2. Import trùng
+
+Nếu một bài đang ACTIVE đã có normalized_path_key giống file mới:
+
+- Không tạo Track ID mới.
+- Không tạo bản ghi trùng.
+- Không cộng lại date_added.
+- Không xóa Favorites.
+- Không thay đổi Playlist.
+- Không làm mất Listening History.
+
+Có thể cập nhật metadata kỹ thuật nếu file thay đổi và việc cập nhật được thiết kế an toàn.
+
+Không tự ghi đè các thay đổi do người dùng chỉnh ở giai đoạn sau.
+
+## 8.3. File Missing
+
+Khi file không còn tại đường dẫn đã lưu:
+
+- Đánh dấu MISSING.
+- Không xóa bản ghi.
+- Không xóa playlist references.
+- Không xóa favorite.
+- Không xóa listening history.
+- Không làm crash app.
+
+UI tối thiểu:
+
+- Icon cảnh báo.
+- Text "Không tìm thấy file".
+- Không giả vờ bài vẫn có thể phát.
+
+Khi cố phát bài MISSING:
+
+- Thông báo rõ ràng.
+- Không treo ứng dụng.
+- Không dừng toàn bộ chức năng quản lý thư viện.
+- Không tự xóa bản ghi.
+
+Việc tự phát hiện file đổi tên hoặc di chuyển thông qua folder watcher thuộc Mốc 6.
+
+Trong M2.2 chỉ kiểm tra trạng thái file bằng những thời điểm hợp lý, như import, mở file hoặc kiểm tra đường dẫn.
+
+Nếu bổ sung Locate File thủ công cho một bài, chỉ được cập nhật đường dẫn sau khi xác minh đúng file, và phải giữ Track ID. Không xây hệ thống tự dò tìm thư mục hàng loạt tại đây.
+
+## 8.4. Remove from Library
+
+Khi chọn Remove from Library:
+
+- Hiển thị confirmation nếu hành động có thể gây nhầm lẫn.
+- Không xóa file gốc.
+- Chuyển library_status thành REMOVED.
+- Ẩn khỏi danh sách thư viện active.
+- Giữ Stable Track ID.
+- Giữ raw listening history.
+- Giữ qualified play records.
+
+Những dữ liệu liên kết như playlist và favorites không được âm thầm xóa.
+
+Các liên kết tới bài REMOVED có thể hiển thị trạng thái không khả dụng trong những ngữ cảnh cần bảo toàn cấu trúc.
+
+## 8.5. Reimport bài đã Remove
+
+Nếu người dùng import lại file có normalized_path_key khớp bản ghi REMOVED:
+
+- Ưu tiên khôi phục record cũ.
+- Giữ Track ID.
+- Giữ lịch sử.
+- Giữ ngày thêm gốc nếu phù hợp.
+- Đưa library_status về ACTIVE.
+
+Nếu có dấu hiệu đường dẫn cũ hiện chứa một file khác, ví dụ kích thước, thời lượng hoặc metadata nhận diện thay đổi đáng kể:
+
+- Không tự ghép lịch sử của file cũ vào file mới khi chưa xác minh.
+- Báo cáo tình huống hoặc dùng luồng xác nhận an toàn.
+
+Không tự quyết định xóa lịch sử để giải quyết xung đột.
+
+## 8.6. Acceptance Tests
+
+- Import 100 bài.
+- Import lại cùng thư mục.
+- Số bài không tăng.
+- UUID không đổi.
+- Di chuyển thử một file.
+- App đánh dấu Missing khi kiểm tra.
+- Favorite và Playlist còn nguyên.
+- Xóa một bài khỏi thư viện.
+- File nhạc gốc vẫn còn.
+- Listening History vẫn còn.
+- Reimport an toàn không làm tách lịch sử.
+
+Không tự bật folder watcher ở bước này.
+
+---
+
+# PHAN 9. M2.3 - VIETNAMESE SEARCH, SORTING & FILTERING
+
+## 9.1. Search Requirements
+
+Tìm kiếm trên:
+
+- Song Title.
+- Artist.
+- Album.
+
+Không phân biệt:
+
+- Chữ hoa và chữ thường.
+- Dấu tiếng Việt.
+- Unicode dựng sẵn và Unicode tổ hợp.
+
+Phải xử lý:
+
+- đ tương đương d.
+- Đ tương đương d.
+
+## 9.2. Search Normalization
+
+Tạo hàm chuẩn hóa tìm kiếm có thể kiểm thử riêng.
+
+Luồng logic:
+
+1. Nhận chuỗi đầu vào.
+2. Unicode normalize theo quy tắc phù hợp.
+3. Chuyển chữ thường.
+4. Loại bỏ dấu kết hợp tiếng Việt.
+5. Chuyển `đ` thành `d`.
+6. Chuẩn hóa khoảng trắng.
+7. So khớp trên dữ liệu đã chuẩn hóa.
+
+Không thay đổi metadata hiển thị gốc.
+
+Ví dụ:
+
+"Đen Vâu" vẫn phải hiển thị là "Đen Vâu".
+
+Search key có thể là "den vau".
+
+Không sửa title trong database thành không dấu chỉ để hỗ trợ tìm kiếm.
+
+## 9.3. Test Cases
+
+Bắt buộc:
+
+- "den vau" khớp "Đen Vâu".
+- "DEN VAU" khớp "Đen Vâu".
+- "dem" khớp "Đêm".
+- "dem" khớp "đêm".
+- "hoa" khớp "Hòa".
+- Các chuỗi Unicode dựng sẵn và tổ hợp cho cùng kết quả.
+- Tìm bằng title.
+- Tìm bằng artist.
+- Tìm bằng album.
+
+Một bài khớp nhiều trường chỉ xuất hiện một lần trong cùng tập kết quả bài hát.
+
+## 9.4. Search Behavior
+
+Khi người dùng nhập:
+
+- Kết quả cập nhật theo truy vấn.
+- Không cần gọi Internet.
+- Không phân biệt hoa thường.
+- Không yêu cầu nhập đúng dấu.
+- Kết quả bài REMOVED không xuất hiện trong thư viện active.
+- Bài MISSING có thể vẫn xuất hiện và được đánh dấu Missing.
+
+Với ô tìm kiếm rỗng:
+
+- Hiển thị danh sách mặc định.
+- Không tạo lỗi.
+- Không trả danh sách rỗng nếu thư viện có bài.
+
+## 9.5. Sorting
+
+Hỗ trợ:
+
+- Title.
+- Artist.
+- Album.
+- Date Added.
+- Duration.
+
+Mỗi tiêu chí hỗ trợ Ascending/Descending khi hợp lý.
+
+Quy tắc:
+
+- Kết quả phải ổn định.
+- Hai bài có cùng khóa sắp xếp cần tie-breaker ổn định như Track ID.
+- Không làm mất selection khi đổi sort.
+- Không sửa dữ liệu gốc chỉ để sort.
+- Date Added dùng thời điểm thực tế lưu trong DB.
+- Duration được xử lý dưới dạng số, không sort theo chuỗi "3:45".
+
+## 9.6. Filtering
+
+Các bộ lọc:
+
+- Favorites.
+- Recently Played.
+- Most Played.
+- Recently Added.
+
+Recently Played lấy từ listening sessions đã được ghi, không tự tạo dữ liệu.
+
+Most Played xếp theo qualified play count, không phải số lần click Play.
+
+Recently Added lấy từ date_added.
+
+Nếu Listening History chưa được triển khai khi đang ở M2.3:
+
+- Chuẩn bị contract truy vấn.
+- Không tạo thống kê giả.
+- Không tự hoàn thành M2.5 trước thời điểm.
+- Sau M2.5, kiểm thử lại các filter phụ thuộc lịch sử.
+
+Không sử dụng dữ liệu mock trong production để lấp đầy các mục này.
+
+## 9.7. Acceptance Tests
+
+- Search không dấu chính xác.
+- Search Unicode tổ hợp.
+- Sort title.
+- Sort artist.
+- Sort album.
+- Sort date added.
+- Sort duration.
+- Filter favorites.
+- Filter recently added.
+- Không xuất hiện duplicate search results.
+- Không xảy ra SQL injection.
+- Search thư viện lớn không làm UI bị khóa kéo dài.
+
+Không chuyển M2.4 khi test cốt lõi M2.3 chưa đạt.
+
+---
+
+# PHAN 10. M2.4 - PLAYLIST, FAVORITES, QUEUE, SHUFFLE & REPEAT
+
+## 10.1. Playlist
+
+Người dùng phải có thể:
+
+- Tạo playlist.
+- Đặt tên.
+- Sửa tên.
+- Xóa playlist.
+- Thêm bài.
+- Xóa bài khỏi playlist.
+- Sắp xếp thứ tự bài.
+- Phát playlist.
+- Phát một bài trong playlist.
+
+Không xóa file nhạc khi xóa playlist.
+
+Không xóa bài khỏi thư viện khi xóa bài khỏi playlist.
+
+Không xóa listening history khi xóa playlist.
+
+## 10.2. Playlist Identity
+
+Mỗi playlist có playlist_id riêng.
+
+Tên playlist chỉ dùng để hiển thị.
+
+Đổi tên playlist không tạo playlist mới.
+
+Không làm mất danh sách bài khi đổi tên.
+
+## 10.3. Add Track
+
+Khi thêm bài:
+
+- Phải sử dụng Track ID.
+- Không sử dụng title để nhận diện.
+- Nếu bài đã có trong playlist, không tạo duplicate qua thao tác Add thông thường.
+- Thông báo nhẹ rằng bài đã tồn tại, nếu phù hợp.
+
+## 10.4. Reordering
+
+Kéo thả hoặc thao tác Move Up/Move Down.
+
+Sau khi đổi thứ tự:
+
+- UI cập nhật.
+- Database cập nhật.
+- Restart vẫn giữ thứ tự.
+- Không tạo hai vị trí trùng nhau.
+- Không làm mất bài.
+
+Nếu UI hiện tại chưa hỗ trợ drag-and-drop, có thể dùng điều khiển reorder đơn giản trong Giai đoạn 2.
+
+Không tự thiết kế lại Playlist Selection thành Editorial Gallery ở đây.
+
+## 10.5. Favorites
+
+Favorite là trạng thái gắn với Track ID.
+
+Click Favorite:
+
+- Nếu đang OFF -> ON.
+- Nếu đang ON -> OFF.
+
+Trạng thái phải lưu ngay.
+
+Restart vẫn giữ.
+
+Không mất Favorite khi:
+
+- Đổi sort.
+- Đổi filter.
+- Đổi playlist.
+- File tạm thời MISSING.
+
+## 10.6. Queue
+
+Queue là danh sách các mục phát theo thứ tự.
+
+Phải hỗ trợ:
+
+- Play Now.
+- Add to Queue.
+- Play Next.
+- Remove from Queue.
+- Reorder Queue.
+- Clear Queue.
+- Next.
+- Previous.
+
+### Play Now
+
+Khi chọn một bài từ thư viện hoặc playlist:
+
+- Bài được yêu cầu phải trở thành bài đang phát.
+- Playback context phải được xác định rõ.
+- Không tạo một AudioEngine mới.
+- Không làm hỏng danh sách playlist.
+- Không xóa file hoặc thay đổi metadata.
+
+Quy tắc mặc định nếu chưa có hành vi cũ đã được xác nhận:
+
+- Play Now một bài trong playlist dùng playlist đó làm playback context.
+- Play Now từ danh sách Songs dùng danh sách Songs hiện đang hiển thị làm playback context theo thứ tự đã chọn.
+- Play Now từ hàng đợi phát mục tương ứng trong queue hiện tại.
+- Các mục đã thêm chủ động bằng Add to Queue phải được giữ và xử lý nhất quán.
+
+Nếu source hiện có hành vi Queue khác, hãy mô tả khác biệt trước khi thay đổi.
+
+### Add to Queue
+
+- Thêm bài vào cuối hàng đợi.
+- Không tự phát ngay.
+- Không làm thay đổi bài đang phát.
+- Cập nhật SQLite.
+
+### Play Next
+
+- Chèn bài vào vị trí kế tiếp sau mục hiện tại.
+- Không dừng bài hiện tại.
+- Không đưa bài xuống cuối queue.
+
+### Remove from Queue
+
+- Chỉ xóa queue entry.
+- Không xóa bài khỏi thư viện.
+- Không xóa khỏi playlist.
+- Không xóa history.
+
+### Clear Queue
+
+- Xóa các entry chờ phát theo hành vi được thiết kế rõ.
+- Không xóa current track khỏi AudioEngine khi đang phát.
+- Không xóa thư viện.
+
+## 10.7. Queue Persistence
+
+Lưu:
+
+- Danh sách entry.
+- Thứ tự entry.
+- Current queue pointer.
+- Playback context.
+- Shuffle state.
+- Repeat state.
+
+Sau restart:
+
+- Queue vẫn còn.
+- Không tự động phát nếu auto-play chưa được bật hợp lệ.
+- Không tự chọn lại bài đầu chỉ vì queue được khôi phục.
+
+Việc khôi phục giây phát chính xác thuộc tính năng nhớ trạng thái tổng thể, nếu chưa có ở Mốc 1 thì phải đánh dấu rõ là chưa hoàn thành.
+
+## 10.8. Shuffle
+
+Shuffle ON:
+
+- Chọn bài theo thứ tự ngẫu nhiên trong playback context.
+- Tránh lặp một bài trước khi hoàn tất vòng phát, nếu đủ bài hợp lệ.
+- Previous ưu tiên quay về lịch sử các bài thực sự đã nghe.
+- Không xóa queue.
+- Không làm thay đổi playlist order đã lưu.
+
+Shuffle OFF:
+
+- Quay lại quy tắc thứ tự của playback context.
+- Không sửa dữ liệu Playlist.
+- Không tạo duplicate.
+
+Nếu có bài được thêm bằng Play Next, ưu tiên bài đã được người dùng yêu cầu phát kế tiếp trước lựa chọn ngẫu nhiên tự động.
+
+Không chọn file MISSING như một bài có thể phát bình thường.
+
+Nếu không còn bài hợp lệ, dừng một cách rõ ràng.
+
+## 10.9. Repeat
+
+Có đúng ba chế độ:
+
+**OFF**
+
+- Khi tự phát đến cuối danh sách, dừng.
+- Không tự quay về đầu.
+
+**ONE**
+
+- Khi bài kết thúc tự nhiên, phát lại chính bài đó.
+- Không tự chuyển bài khác.
+- Mỗi lần bài phát lại tự nhiên bắt đầu một listening session mới.
+- Nhấn Next thủ công vẫn được phép chuyển sang bài khác.
+
+**ALL**
+
+- Khi phát hết danh sách, quay lại đầu.
+- Nếu Shuffle ON, có thể tạo vòng thứ tự ngẫu nhiên mới.
+- Không tạo trùng entry trong database chỉ để repeat.
+
+## 10.10. Shuffle + Repeat
+
+Khi cả Shuffle và Repeat ONE cùng bật:
+
+- Repeat ONE ưu tiên khi bài kết thúc tự nhiên.
+- Shuffle vẫn được lưu.
+- Khi người dùng Next thủ công, chọn bài khác theo quy tắc queue/shuffle.
+
+Khi Shuffle + Repeat ALL:
+
+- Phát hết vòng trước khi bắt đầu vòng mới.
+- Không lặp bài không cần thiết nếu còn bài chưa phát trong vòng.
+- History Previous vẫn hoạt động.
+
+## 10.11. Acceptance Tests
+
+- Tạo playlist.
+- Thêm 10 bài.
+- Đổi thứ tự.
+- Restart.
+- Thứ tự giữ nguyên.
+- Xóa bài khỏi playlist không xóa file.
+- Favorite giữ sau restart.
+- Add to Queue đúng thứ tự.
+- Play Next đúng vị trí.
+- Previous đúng lịch sử.
+- Shuffle không làm thay đổi playlist.
+- Repeat ONE phát lại đúng bài.
+- Repeat ALL quay về đầu.
+- Repeat OFF kết thúc thì dừng.
+- Missing file không gây crash.
+- AudioEngine vẫn phát FLAC như trước.
+
+---
+
+# PHAN 11. M2.5 - RAW LISTENING HISTORY
+
+ĐÂY LÀ PHẦN QUAN TRỌNG NHẤT VỀ ĐỘ CHÍNH XÁC DỮ LIỆU.
+
+Không được đơn giản hóa thành "mỗi lần click Play thì cộng một lượt".
+
+## 11.1. Mục tiêu
+
+Ghi lịch sử thô của từng phiên nghe nhạc để sau này tạo Statistics Dashboard.
+
+Chưa xây Statistics Dashboard ở M2.5.
+
+Chỉ xây:
+
+- Data collection.
+- Persistence.
+- Listening session lifecycle.
+- Qualified play calculation.
+- Testable queries hoặc màn debug tối thiểu.
+
+## 11.2. Session Lifecycle
+
+Một listening session được tạo khi bài bắt đầu phát thực sự.
+
+Session được gắn với:
+
+- Session ID.
+- Track ID.
+- Start time.
+- Accumulated actual listening time.
+- Qualified status.
+
+Không tạo một session mới mỗi lần Pause/Resume.
+
+Không tạo session mới mỗi lần Seek.
+
+Khi Next/Previous chuyển sang bài khác:
+
+- Kết thúc session cũ.
+- Bắt đầu session mới khi bài mới thực sự phát.
+
+Khi Repeat ONE phát lại từ đầu do kết thúc tự nhiên:
+
+- Kết thúc session vừa rồi.
+- Tạo session mới cho lượt phát tiếp theo.
+
+Khi ứng dụng đóng:
+
+- Ghi checkpoint cuối nếu có thể.
+- Đưa phiên nghe về trạng thái kết thúc hoặc gián đoạn phù hợp.
+- Không tự cộng thêm thời gian lúc app đã tắt.
+
+## 11.3. Actual Listening Time
+
+Chỉ cộng thời gian khi audio thực sự đang phát.
+
+Không cộng khi:
+
+- Paused.
+- Waiting hoặc buffering.
+- Seeking.
+- Stopped.
+- Error.
+- File missing.
+- App đã đóng.
+
+Không cộng phần thời gian bị tua bỏ qua.
+
+Ví dụ:
+
+Bắt đầu ở 00:00.
+
+Nghe đến 00:20.
+
+Seek tới 02:30.
+
+Nghe thêm 00:15.
+
+Actual listened time = 35 giây.
+
+Không được ghi thành 165 giây.
+
+## 11.4. Đo thời gian
+
+Không chỉ sử dụng công thức:
+
+`currentTime - sessionStartCurrentTime`
+
+Vì công thức này sẽ sai khi Seek.
+
+Không chỉ sử dụng:
+
+`Date.now() - sessionStartTime`
+
+Vì sẽ sai khi Pause hoặc buffering.
+
+Sử dụng các playback events thực tế như:
+
+- playing.
+- pause.
+- waiting.
+- seeking.
+- seeked.
+- ended.
+- error.
+
+Kết hợp đồng hồ đo thời gian đơn điệu và kiểm tra media progress.
+
+Khi có Seek, phải kết thúc đoạn nghe cũ và bắt đầu đoạn mới tại vị trí mới.
+
+Không cộng một khoảng thời gian lớn bất thường nếu máy sleep, audio stall hoặc đồng hồ hệ thống thay đổi.
+
+Nếu playback rate khác 1 trong tương lai, cần có quy tắc riêng, không ngầm giả định mọi cấu hình đều phát ở tốc độ 1.
+
+## 11.5. Qualified Play Rule
+
+Áp dụng hàm ngưỡng:
+
+Nếu duration < 60 giây:
+
+`threshold = duration / 2`
+
+Nếu duration >= 60 giây:
+
+`threshold = 30 giây`
+
+Nếu duration không xác định hoặc không hợp lệ, không tự cộng qualified play cho đến khi xác minh được ngưỡng.
+
+Khi listened time vượt ngưỡng:
+
+- qualified_play chuyển từ FALSE sang TRUE.
+- Ghi thời điểm đạt ngưỡng.
+- Chỉ thực hiện chuyển trạng thái một lần trong một session.
+
+Không được tăng counter nhiều lần vì timer chạy nhiều lần.
+
+Không được tăng lượt khi người dùng Seek qua mốc 30 giây.
+
+Không được tăng lượt khi bài được import.
+
+Không được tăng lượt chỉ vì bài xuất hiện trong queue.
+
+## 11.6. Checkpoint
+
+Ghi dữ liệu định kỳ.
+
+Chu kỳ đề xuất: khoảng 5 giây khi đang phát.
+
+Ngoài ra ghi ngay khi:
+
+- Pause.
+- Track Change.
+- Stop.
+- Ended.
+- Normal App Exit.
+
+Checkpoint phải an toàn với việc ứng dụng bị crash.
+
+Không được ghi chồng cùng một khoảng thời gian nhiều lần sau restart.
+
+Cần sử dụng cơ chế idempotent hoặc cập nhật cumulative counters có kiểm soát transaction.
+
+Không được dựa vào việc app sẽ luôn đóng bình thường.
+
+Không cam kết không mất bất kỳ mili giây nào nếu Windows tắt đột ngột.
+
+Mục tiêu là giới hạn mất dữ liệu gần mức checkpoint gần nhất.
+
+## 11.7. Time Segments
+
+Lưu đủ thông tin để phân bổ thời gian nghe theo ngày và giờ.
+
+Ví dụ:
+
+Người dùng nghe từ 23:58 đến 00:03.
+
+Sau này Statistics phải có khả năng phân bổ thời gian đúng cho hai ngày địa phương.
+
+Không dồn toàn bộ 5 phút vào ngày bắt đầu chỉ vì session bắt đầu trước nửa đêm.
+
+Lưu timestamp theo chuẩn ổn định, ưu tiên UTC.
+
+Dùng timezone địa phương của máy khi hiển thị và nhóm thống kê.
+
+Không sử dụng tên ngày hoặc chuỗi ngày định dạng theo locale làm khóa dữ liệu chính.
+
+## 11.8. Deleted Track History
+
+Nếu bài bị Remove from Library:
+
+- Listening Sessions vẫn còn.
+- Time Segments vẫn còn.
+- Qualified Plays vẫn còn.
+- Lịch sử vẫn truy vấn được.
+
+Nếu cần giữ thông tin tên bài/nghệ sĩ để hiện nhóm "Bài đã xóa", hãy đảm bảo record tombstone hoặc dữ liệu snapshot phù hợp.
+
+Không thiết kế truy vấn INNER JOIN chỉ lấy bài ACTIVE rồi vô tình làm biến mất lịch sử của bài REMOVED.
+
+## 11.9. Debug Validation
+
+Trong M2.5 cần có cách kiểm thử minh bạch dữ liệu.
+
+Ví dụ:
+
+- Session ID.
+- Track ID.
+- Listened Seconds.
+- Threshold Seconds.
+- Qualified TRUE/FALSE.
+- Last Checkpoint.
+
+Có thể hiển thị trong test output, debug panel đơn giản hoặc truy vấn kiểm tra.
+
+Không bắt buộc xây Statistics Dashboard Premium.
+
+Không hiển thị số liệu giả.
+
+## 11.10. Acceptance Tests
+
+TEST A:
+
+Nghe bài 4 phút trong 20 giây.
+
+Kết quả:
+
+- Actual Listening: khoảng 20 giây.
+- Qualified Plays: 0.
+
+TEST B:
+
+Nghe bài 4 phút trong 35 giây.
+
+Kết quả:
+
+- Actual Listening: khoảng 35 giây.
+- Qualified Plays: 1.
+
+TEST C:
+
+Nghe 1 phút.
+
+Pause 10 phút.
+
+Resume nghe 20 giây.
+
+Kết quả:
+
+- Actual Listening: khoảng 80 giây.
+- Không cộng 10 phút Pause.
+- Qualified Plays của phiên: 1.
+
+TEST D:
+
+Nghe 10 giây.
+
+Seek về phía trước 2 phút.
+
+Nghe thêm 10 giây.
+
+Kết quả:
+
+- Actual Listening: khoảng 20 giây.
+- Qualified Plays: 0.
+
+TEST E:
+
+Bài có duration 40 giây.
+
+Nghe 20 giây.
+
+Kết quả:
+
+- Qualified Plays: 1.
+
+TEST F:
+
+Bài có duration 60 giây.
+
+Nghe 29 giây.
+
+Kết quả:
+
+- Qualified Plays: 0.
+
+Nghe thêm 1 giây thực tế.
+
+Kết quả:
+
+- Qualified Plays: 1.
+
+TEST G:
+
+Nghe đủ ngưỡng.
+
+Seek về đầu.
+
+Nghe tiếp trong cùng phiên.
+
+Kết quả:
+
+- Vẫn chỉ một qualified play của phiên.
+- Actual listening time tiếp tục cộng hợp lệ.
+
+TEST H:
+
+Bật Repeat ONE.
+
+Bài kết thúc.
+
+Bài được phát lại tự nhiên.
+
+Kết quả:
+
+- Tạo session mới.
+- Không sử dụng lại session đã kết thúc.
+
+TEST I:
+
+Đang phát nhạc, đóng app đột ngột.
+
+Khởi động lại.
+
+Kết quả:
+
+- Những checkpoint đã ghi vẫn tồn tại.
+- Không nhân đôi dữ liệu.
+- Không tự cộng thời gian khi app đã đóng.
+
+TEST J:
+
+Nghe một bài.
+
+Remove from Library.
+
+Kết quả:
+
+- Listening History vẫn tồn tại.
+- Track có trạng thái REMOVED.
+- Dữ liệu có thể sử dụng cho nhóm "Bài đã xóa".
+
+TEST K:
+
+Nghe qua thời điểm nửa đêm.
+
+Kết quả:
+
+- Có dữ liệu đủ để phân bổ thời gian theo hai ngày.
+- Tổng thời gian không bị nhân đôi.
+
+---
+
+# PHAN 12. M2.6 - INTEGRATION & REGRESSION
+
+M2.6 không phải thời điểm thêm một nhóm tính năng mới.
+
+Nhiệm vụ là xác minh toàn bộ Giai đoạn 2.
+
+## 12.1. Database
+
+- Integrity check.
+- Foreign keys.
+- Migration version.
+- No duplicate tracks.
+- No orphan records ngoài các trường hợp được thiết kế.
+- Stable IDs.
+- Persistent playlists.
+- Persistent favorites.
+- Persistent queue.
+- Listening history retention.
+
+## 12.2. Library
+
+- Import single file.
+- Import folder.
+- Recursive import.
+- Reimport.
+- Unicode paths.
+- Missing files.
+- Remove from Library.
+- Restart.
+- Restore from existing SQLite.
+
+## 12.3. Search
+
+- Accent-insensitive Vietnamese.
+- Case-insensitive.
+- Unicode normalized.
+- Stable sorting.
+- Correct filters.
+
+## 12.4. Playback Integration
+
+- Play.
+- Pause.
+- Resume.
+- Next.
+- Previous.
+- Seek nếu đã hỗ trợ.
+- Queue.
+- Shuffle.
+- Repeat.
+- Missing-track handling.
+
+## 12.5. History
+
+- Listening sessions.
+- Qualified counts.
+- Paused time excluded.
+- Seek skip excluded.
+- Checkpoint.
+- Crash recovery.
+- Deleted history preserved.
+
+## 12.6. Performance
+
+Kiểm thử thư viện khoảng 1.000 bài nếu có đủ test fixtures hoặc dữ liệu người dùng cho phép.
+
+Không tự tạo 1.000 file FLAC lớn chỉ để kiểm thử nếu không cần.
+
+Có thể dùng test fixtures hợp lệ để kiểm tra database và tìm kiếm.
+
+Tuy nhiên, các test phát nhạc thực tế phải dùng file audio thực và không được đánh dấu PASS chỉ nhờ mock.
+
+Kiểm tra:
+
+- Không khóa UI khi load library.
+- Không chạy truy vấn SQLite không cần thiết trên mọi animation frame.
+- Không tăng RAM bất thường khi đổi bài liên tục.
+- Không tạo listening session trùng.
+- Không làm mất dữ liệu sau restart.
+
+## 12.7. Offline
+
+Tắt Internet.
+
+Kiểm tra toàn bộ các chức năng thuộc M2.
+
+Không có yêu cầu network để đọc thư viện, tìm kiếm, phát nhạc hoặc lưu dữ liệu.
+
+Đây là kiểm tra runtime hiện tại, không thay thế cho kiểm thử bản EXE đóng gói cuối cùng ở Giai đoạn 6.
+
+---
+
+# PHAN 13. UI TRONG GIAI DOAN 2
+
+Giai đoạn này chỉ cho phép Functional UI.
+
+Được phép:
+
+- Nút Import Music.
+- Danh sách bài hát cơ bản.
+- Search Input.
+- Sort Control.
+- Filter Control.
+- Playlist Management.
+- Favorites Button.
+- Queue Panel.
+- Shuffle/Repeat Controls.
+- Missing File Indicator.
+- Thông báo lỗi và trạng thái dữ liệu.
+
+Không được:
+
+- Thiết kế lại Home.
+- Xây dựng 3D Album Coverflow.
+- Xây dựng Editorial Playlist Gallery.
+- Thêm Vinyl Turntable.
+- Thêm animation thay đĩa.
+- Đổi toàn bộ font/theme.
+- Thay cấu trúc navigation đang hoạt động nếu không bắt buộc.
+- Tạo Statistics Dashboard.
+
+Giữ nguyên UI hiện tại ở mức tối đa.
+
+Các component chức năng mới cần có trạng thái:
+
+- Default.
+- Loading.
+- Success.
+- Error.
+- Empty.
+- Disabled khi cần.
+
+Không tạo nút chỉ để trang trí mà không có hành vi thật.
+
+Không làm UI phức tạp để che đi logic chưa hoàn thành.
+
+---
+
+# PHAN 14. BACKUP, MIGRATION & ROLLBACK
+
+Trước khi sửa database:
+
+1. Xác định database thực tế.
+2. Ghi nhận schema version.
+3. Tạo backup an toàn.
+4. Xác minh backup có thể đọc.
+5. Ghi lại file sẽ thay đổi.
+6. Chuẩn bị cách rollback.
+
+Nếu SQLite đang mở và có ghi dữ liệu, phải sử dụng cách backup nhất quán với SQLite, không sao chép tùy tiện một file database đang được ghi.
+
+Khi migration:
+
+- Không DROP bảng có dữ liệu để tạo lại cho nhanh.
+- Không xóa dữ liệu người dùng.
+- Không tạo database trắng thay thế database đang dùng.
+- Không đổi appId để tránh migration.
+- Không tự đổi tên folder userData.
+
+Nếu migration thất bại:
+
+- Không tiếp tục ghi trên database không rõ trạng thái.
+- Báo lỗi rõ ràng.
+- Giữ backup.
+- Hướng dẫn rollback.
+
+Nếu cần schema mới, phải có migration version rõ ràng.
+
+Đặc biệt phải bảo vệ listening history để những lần cập nhật sau không làm mất thống kê.
+
+---
+
+# PHAN 15. TESTING RULES
+
+## 15.1. Không được báo PASS giả
+
+Mọi bài test phải có trạng thái:
+
+- PASS.
+- FAIL.
+- NOT RUN.
+- BLOCKED.
+
+Nếu PASS, cung cấp bằng chứng:
+
+- Tên test.
+- Lệnh đã chạy.
+- Kết quả.
+- Output liên quan.
+
+Nếu chưa chạy trên Windows thực tế:
+
+- Ghi NOT RUN hoặc BLOCKED.
+- Không viết "Đã hoạt động 100%".
+
+## 15.2. Không sửa test để che lỗi
+
+Không được:
+
+- Xóa assertion khó.
+- Bỏ qua test thất bại mà không giải thích.
+- Mock một chức năng production chưa tồn tại rồi coi là hoàn thành.
+- Thay điều kiện test để phù hợp với code lỗi.
+
+Được dùng test fixtures và mocks trong unit tests phù hợp, nhưng phải phân biệt với kiểm thử tích hợp và thao tác thực tế.
+
+## 15.3. Regression
+
+Sau mỗi M2.x phải chạy lại các bài test liên quan tới:
+
+- App startup.
+- Database init.
+- Library load.
+- FLAC playback.
+- Play/Pause.
+- Next/Previous nếu đã có.
+- Seek nếu đã có.
+- IPC.
+- Local media protocol.
+
+Nếu chức năng cũ bị hỏng, M2.x chưa đạt.
+
+---
+
+# PHAN 16. QUY TRINH THUC HIEN 1 MOC MOI LAN
+
+Quy trình bắt buộc cho từng M2.x:
+
+## Step A - Read
+
+Đọc source liên quan.
+
+Không sửa trước khi đọc.
+
+## Step B - Analyze
+
+Xác định:
+
+- Current behavior.
+- Required behavior.
+- Gap.
+- Root cause.
+- Risks.
+
+## Step C - Plan
+
+Liệt kê chính xác:
+
+- File cần sửa.
+- Hàm cần sửa.
+- Database change nếu có.
+- IPC change nếu có.
+- Test cần thêm.
+- Cách rollback.
+
+## Step D - Implement
+
+Sửa tối thiểu.
+
+Không thêm tính năng ngoài phạm vi.
+
+## Step E - Test
+
+Chạy:
+
+- Unit tests.
+- Integration tests.
+- Regression tests.
+
+Nếu chưa có test infrastructure, báo rõ và đề xuất mức bổ sung nhỏ nhất.
+
+## Step F - Manual Verification
+
+Hướng dẫn người dùng kiểm tra trên Windows.
+
+Không yêu cầu người dùng tự đoán cách kiểm thử.
+
+## Step G - Report
+
+Báo cáo kết quả.
+
+## Step H - STOP
+
+Dừng lại.
+
+Không chuyển sang M2.x tiếp theo cho đến khi người dùng xác nhận.
+
+---
+
+# PHAN 17. HUONG DAN WINDOWS POWERSHELL
+
+Người dùng đã gặp lỗi PowerShell Execution Policy trước đây khi gọi npm.ps1.
+
+Vì vậy, ưu tiên sử dụng:
+
+`npm.cmd`
+
+thay vì:
+
+`npm`
+
+Ví dụ:
+
+`npm.cmd install`
+
+Nhưng không tự yêu cầu chạy install nếu dependencies đã có và không cần thiết.
+
+Trước khi hướng dẫn lệnh:
+
+1. Xác định đúng project directory.
+2. Đọc package.json.
+3. Xác định script thực tế.
+4. Chỉ đưa lệnh đang tồn tại và phù hợp.
+
+Không giả định package.json nằm trong System32.
+
+Không yêu cầu người dùng thay đổi PowerShell Execution Policy trên toàn hệ thống.
+
+Mỗi bước hướng dẫn cần có:
+
+- Lệnh chính xác.
+- Mục đích.
+- Kết quả mong đợi.
+- Cách nhận biết PASS/FAIL.
+- Người dùng phải gửi lại gì nếu lỗi.
+
+Không đưa hàng chục lệnh một lúc khi người dùng đang kiểm thử một bước cụ thể.
+
+---
+
+# PHAN 18. FORMAT BAO CAO BAT BUOC
+
+Mỗi tiểu mốc phải trả về báo cáo có cấu trúc:
+
+## 1. CURRENT MILESTONE
+
+Tên M2.x.
+
+## 2. CURRENT STATE
+
+Những gì source hiện có.
+
+## 3. FINDINGS
+
+Những vấn đề đã phát hiện.
+
+## 4. PROPOSED SOLUTION
+
+Giải pháp và lý do.
+
+## 5. FILES TO CHANGE
+
+Danh sách đường dẫn file chính xác.
+
+## 6. DATABASE IMPACT
+
+Schema, migration, dữ liệu bị ảnh hưởng.
+
+## 7. AUDIO IMPACT
+
+Xác nhận có hoặc không thay AudioEngine.
+
+Nếu có, giải thích cụ thể và phải được duyệt trước.
+
+## 8. IMPLEMENTATION
+
+Code hoặc patch đầy đủ.
+
+## 9. TEST RESULTS
+
+PASS/FAIL/NOT RUN/BLOCKED.
+
+## 10. MANUAL TEST
+
+Hướng dẫn Windows.
+
+## 11. REGRESSION
+
+Kết quả kiểm tra chức năng cũ.
+
+## 12. ROLLBACK
+
+Cách trở về trạng thái trước.
+
+## 13. REMAINING ISSUES
+
+Các vấn đề chưa giải quyết.
+
+## 14. GATE DECISION
+
+PASS hoặc NOT READY.
+
+Không tự đặt PASS nếu chưa có kiểm thử và xác nhận của người dùng.
+
+---
+
+# PHAN 19. QUY TAC VE FILE VA CODE
+
+Khi cung cấp code:
+
+- Nếu sửa file nhỏ, cung cấp patch chính xác hoặc file hoàn chỉnh.
+- Nếu sửa file lớn, chỉ cung cấp vùng thay đổi rõ ràng theo cấu trúc source thực tế.
+- Không viết pseudocode rồi nói đó là code production.
+- Không xóa import hoặc API đang sử dụng.
+- Không tự đổi tên file.
+- Không tự đổi package manager.
+- Không tự cập nhật dependency major version.
+- Không đưa toàn bộ project thành một file.
+- Không bỏ TypeScript type safety chỉ để hết lỗi.
+- Không dùng `any` tràn lan.
+- Không tắt TypeScript strict mode nếu đang bật.
+- Không tắt security checks của Electron để xử lý lỗi IPC.
+- Không giấu lỗi bằng catch rỗng.
+- Không tạo dữ liệu nhạc giả trong production.
+
+Nếu code đang thiếu một interface cần thiết, phải giải thích trước khi thay đổi.
+
+---
+
+# PHAN 20. QUY TAC XU LY TINH HUONG NGOAI DU KIEN
+
+Nếu phát hiện lỗi ngoài phạm vi M2.x:
+
+Phân loại:
+
+**BLOCKER**
+
+Lỗi khiến M2.x không thể triển khai an toàn.
+
+Ví dụ: database không thể mở hoặc AudioEngine bị lỗi nghiêm trọng sau migration.
+
+Hành động:
+
+- Dừng.
+- Giải thích.
+- Đề xuất sửa blocker trước.
+- Không tự viết lại toàn bộ hệ thống.
+
+**RELATED NON-BLOCKER**
+
+Lỗi có liên quan nhưng không chặn M2.x.
+
+Hành động:
+
+- Ghi vào danh sách tồn đọng.
+- Không tự mở rộng phạm vi nếu chưa được duyệt.
+
+**OUT OF SCOPE**
+
+Lỗi hoặc yêu cầu thuộc mốc khác.
+
+Hành động:
+
+- Ghi nhận.
+- Không triển khai.
+
+Ví dụ:
+
+- Fade In/Out chưa có: OUT OF SCOPE của M2.
+- Vinyl Animation chưa có: OUT OF SCOPE của M2.
+- Statistics Dashboard chưa có: OUT OF SCOPE của M2.
+- Custom Cover chưa có: OUT OF SCOPE của M2.
+
+Không được lấy lý do "để hoàn thiện trải nghiệm" để tự triển khai những tính năng này.
+
+---
+
+# PHAN 21. FINAL ACCEPTANCE CRITERIA
+
+Toàn bộ Giai đoạn 2 chỉ hoàn thành khi đạt đầy đủ:
+
+## Database
+
+- Thư viện được lưu bền vững.
+- Stable Track IDs.
+- Migrations an toàn.
+- Không mất dữ liệu sau restart.
+
+## Import
+
+- Import file.
+- Import folder.
+- Không import trùng.
+- Không sửa file gốc.
+- Missing files không bị tự xóa.
+
+## Search
+
+- Tiếng Việt không dấu.
+- Unicode precomposed/decomposed.
+- Search Title/Artist/Album.
+- Sorting/Filtering.
+
+## Playlist
+
+- Create/Rename/Delete.
+- Add/Remove/Reorder Tracks.
+- Persist after restart.
+
+## Favorites
+
+- Toggle.
+- Persist.
+- Không bị mất khi file missing.
+
+## Queue
+
+- Add.
+- Play Next.
+- Reorder.
+- Remove.
+- Clear.
+- Persist.
+- Shuffle.
+- Repeat OFF/ONE/ALL.
+
+## Listening History
+
+- Raw sessions.
+- Actual listened time.
+- Threshold chính xác.
+- Pause không cộng thời gian.
+- Seek không cộng thời gian bỏ qua.
+- Checkpoint.
+- Crash recovery.
+- Deleted track history preservation.
+- Có đủ dữ liệu thống kê theo ngày và giờ về sau.
+
+## Regression
+
+- App vẫn khởi động.
+- FLAC vẫn phát.
+- Chất lượng phát không bị can thiệp ngoài yêu cầu.
+- Không lỗi database nghiêm trọng.
+- Không lỗi IPC nghiêm trọng.
+- Không cần Internet.
+
+## Data Safety
+
+- Không xóa file nhạc.
+- Không xóa database.
+- Không mất playlist.
+- Không mất favorites.
+- Không mất listening history.
+- Có backup/rollback trước migration.
+
+Không hoàn thành bất kỳ mục quan trọng nào thì không được tuyên bố "Giai đoạn 2 đã xong".
+
+---
+
+# PHAN 22. NHIEM VU NGAY BAY GIO
+
+Bạn đã nhận toàn bộ đặc tả Giai đoạn 2.
+
+Tuy nhiên, hiện tại CHỈ được thực hiện công việc sau:
+
+**AUDIT SOURCE + PREPARE M2.1**
+
+Hãy:
+
+1. Đọc source code project được cung cấp.
+2. Phân tích SQLite hiện tại.
+3. Phân tích Library Service.
+4. Phân tích import workflow.
+5. Phân tích cơ chế restore library.
+6. Phân tích database migrations.
+7. Kiểm tra test scripts.
+8. Xác định những chức năng hiện có.
+9. Xác định lỗi và rủi ro.
+10. Đề xuất kế hoạch M2.1 chi tiết.
+11. Đề xuất backup và rollback.
+12. Liệt kê chính xác những file cần sửa.
+
+Sau đó DỪNG LẠI.
+
+Không sửa code trước khi có source và audit.
+
+Không triển khai M2.2-M2.6.
+
+Không tự bắt đầu Giai đoạn 3.
+
+Không thêm Fade.
+
+Không thay đổi UI Premium.
+
+Không thay AudioEngine.
+
+Không tạo project mới.
+
+Nếu chưa được cung cấp source code thực tế, hãy yêu cầu ZIP project hoặc các file cần thiết.
+
+Nếu source đã được cung cấp trong phiên làm việc, hãy đọc nó thay vì hỏi lại không cần thiết.
+
+**Mục tiêu cuối cùng: Hoàn thành một hệ thống thư viện nhạc offline ổn định, chính xác, không mất dữ liệu và có nền tảng lịch sử nghe đủ tốt cho Statistics Dashboard tương lai, trong khi bảo vệ toàn bộ chức năng FLAC đã hoạt động.**

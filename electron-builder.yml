@@ -1,0 +1,50 @@
+appId: com.losslessplayer.desktop
+productName: DoReMi
+copyright: Copyright © 2026 DoReMi
+
+directories:
+  buildResources: build
+  output: release
+
+files:
+  - out/**/*
+  - package.json
+  - "!src/**"
+  - "!tests/**"
+  - "!dist/**"
+  - "!release/**"
+  - "!**/*.map"
+
+# Native addon better-sqlite3 MUST be unpacked from ASAR so Windows can load .node binaries
+asar: true
+asarUnpack:
+  - "node_modules/better-sqlite3/**"
+
+# Automatically rebuild native modules for target Electron version during packaging
+npmRebuild: true
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+  artifactName: "${productName}-${version}-${arch}-${target}.${ext}"
+  requestedExecutionLevel: asInvoker
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: DoReMi
+  # Preserve userData (library.db) across upgrades and uninstalls
+  deleteAppDataOnUninstall: false
+
+portable:
+  artifactName: "${productName}-${version}-${arch}-portable.${ext}"
+
+# Strictly offline: disable auto-update / publishing
+publish: null

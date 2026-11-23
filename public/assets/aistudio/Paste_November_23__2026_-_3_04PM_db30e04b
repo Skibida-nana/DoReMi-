@@ -1,0 +1,1555 @@
+# DOREMI - PREMIUM UI IMPLEMENTATION MASTER PROMPT
+## HOME EDITORIAL TYPOGRAPHY + NOW PLAYING REDESIGN + FOCUS VINYL MODE
+### FULL IMPLEMENTATION - FUNCTIONAL FIRST, DESIGN PRECISION SECOND
+
+# 0. NHIỆM VỤ
+
+Bạn là Senior Electron/React/TypeScript Developer, Senior Product Designer, Visual Design Director, Motion Designer và QA Engineer.
+
+Hãy tiếp tục phát triển ứng dụng nghe nhạc offline DoReMi từ source code hiện tại.
+
+Tôi cung cấp các ảnh tham khảo để bạn hiểu chính xác giao diện cần triển khai:
+
+1. Ảnh MISE: Bố cục các card dọc xếp so le, có typography rất lớn phía sau.
+2. Ảnh DoReMi Home hiện tại: Playlist Gallery đã hoạt động nhưng thiếu chữ nền.
+3. Ảnh Hi-Fi Vinyl màu trắng: Tham khảo bố cục Now Playing với đĩa than bên trái và thông tin bên phải.
+
+Hãy sử dụng những ảnh đó làm tài liệu tham khảo trực tiếp, kết hợp với các yêu cầu chi tiết bên dưới.
+
+Nhiệm vụ gồm hai khu vực chính:
+
+**KHU VỰC A - HOME / PLAYLIST GALLERY**
+
+Khôi phục Editorial Background Typography, cho phép tùy chỉnh nội dung và import font cá nhân.
+
+**KHU VỰC B - NOW PLAYING**
+
+Thiết kế lại hoàn toàn giao diện phát nhạc theo hình Hi-Fi Vinyl, đồng thời tạo thêm Focus Vinyl Mode.
+
+Hai khu vực có phạm vi sửa đổi riêng. Không được áp dụng bố cục của khu vực này sang khu vực kia.
+
+---
+
+# 1. FULL IMPLEMENTATION - KHÔNG DỪNG GIỮA CHỪNG
+
+Tôi cho phép triển khai toàn bộ nhiệm vụ trong một lượt làm việc.
+
+Quy trình bắt buộc:
+
+1. Đọc source code hiện tại.
+2. Audit kiến trúc và chức năng.
+3. Xác định file cần sửa.
+4. Khôi phục chữ nền Home.
+5. Triển khai tùy chỉnh chữ và import font.
+6. Redesign Standard Now Playing.
+7. Triển khai Focus Vinyl Mode.
+8. Tích hợp playback, lyrics, queue và theme.
+9. Kiểm thử chức năng.
+10. Kiểm thử giao diện.
+11. Sửa lỗi phát hiện.
+12. Kiểm thử hồi quy.
+13. Báo cáo kết quả cuối cùng.
+
+KHÔNG dừng sau Audit.
+
+KHÔNG hỏi xác nhận từng bước.
+
+KHÔNG chỉ viết kế hoạch hoặc tạo mockup.
+
+KHÔNG kết thúc sau khi sửa một component.
+
+Nếu có chức năng đã hoạt động đúng, hãy giữ nguyên và tiếp tục phần còn thiếu.
+
+Nếu có lỗi kỹ thuật có thể giải quyết an toàn, tự sửa rồi tiếp tục.
+
+Chỉ dừng sớm nếu có blocker thực sự không thể xử lý bằng công cụ hoặc source hiện có.
+
+Nếu bị giới hạn công cụ hoặc ngữ cảnh, phải báo cáo trung thực những phần đã triển khai và chưa hoàn thành.
+
+---
+
+# 2. THỨ TỰ ƯU TIÊN
+
+**P0 - Code hoạt động thật.**
+
+Không tạo nút giả, dữ liệu giả hoặc component chỉ đẹp nhưng không hoạt động.
+
+**P1 - Bảo toàn dữ liệu.**
+
+Không làm mất library, playlist, queue, favorites, listening history, artwork, lyrics hoặc settings.
+
+**P2 - Đúng thiết kế.**
+
+Bố cục phải bám sát ảnh tham khảo và các yêu cầu định lượng.
+
+**P3 - Visual Quality.**
+
+Giao diện phải được hoàn thiện về spacing, typography, màu sắc, alignment và layering.
+
+**P4 - Motion, Performance và Accessibility.**
+
+Animation mượt, không gây giật audio, hỗ trợ keyboard và reduced motion.
+
+Một chức năng chỉ hoàn thành khi logic và UI đều đạt tiêu chí nghiệm thu.
+
+Không được lấy việc build thành công làm bằng chứng rằng giao diện đã đẹp.
+
+---
+
+# 3. QUY TẮC BẢO TOÀN HỆ THỐNG
+
+Không được:
+
+- Tạo project mới.
+- Viết lại toàn bộ ứng dụng.
+- Tạo AudioEngine thứ hai.
+- Thay đổi codec hoặc chất lượng phát FLAC.
+- Đổi appId hoặc userData path.
+- Xóa hoặc reset SQLite.
+- Đổi Stable Track ID.
+- Xóa custom artwork hoặc lyrics.
+- Xóa metadata override.
+- Làm mất playlists, favorites, queue hoặc listening history.
+- Ghi metadata vào file nhạc gốc.
+- Thêm cloud, streaming, tài khoản online hoặc quảng cáo.
+- Thay đổi Mini Player nếu không có lỗi trực tiếp liên quan.
+- Thay đổi Album Coverflow hoặc Song Library.
+- Thay đổi cấu trúc ứng dụng chỉ vì muốn viết lại code.
+
+Giữ thương hiệu **DoReMi**.
+
+Lỗi Toggle Switch trước đây đã được sửa, không cần viết lại phần đó.
+
+---
+
+# PHẦN A - HOME EDITORIAL BACKGROUND TYPOGRAPHY
+
+# 4. VẤN ĐỀ HIỆN TẠI
+
+Home của DoReMi hiện đã có:
+
+- Playlist Gallery dạng portrait cards.
+- Nhiều card xếp so le.
+- Card chính giữa nổi bật.
+- Hai bên có các card nhỏ dần.
+- Điều hướng playlist.
+- Mini Player nằm phía dưới.
+
+Những thành phần này phải được giữ nguyên.
+
+Vấn đề là phần **chữ nền khổng lồ** trong ảnh MISE không còn xuất hiện.
+
+Tôi muốn khôi phục chính xác thành phần đó mà không redesign lại Playlist Gallery.
+
+## 4.1. Nội dung mặc định
+
+Dòng trên:
+
+`YOUR MUSIC`
+
+Dòng dưới:
+
+`YOUR WORLD`
+
+Đây là nội dung mặc định ban đầu.
+
+Người dùng có thể thay đổi sau.
+
+Không sử dụng chữ thương mại như SHOPPING, TOP SELLER hoặc ENTERTAINMENT của ảnh MISE.
+
+---
+
+# 5. BỐ CỤC CHỮ NỀN
+
+## 5.1. Vị trí
+
+Chữ phải nằm PHÍA SAU các portrait cards.
+
+Không đặt chữ:
+
+- Phía trước artwork.
+- Trong từng card.
+- Phía dưới gallery như chú thích.
+- Trong một card riêng.
+- Trên header.
+- Trong Mini Player.
+
+Vị trí:
+
+**YOUR MUSIC**
+
+Nằm sau khu vực nửa trên Gallery.
+
+**YOUR WORLD**
+
+Nằm sau khu vực nửa dưới Gallery.
+
+Hai dòng được căn theo vùng Gallery, không theo toàn bộ cửa sổ Electron.
+
+Chữ phải thực sự trở thành một thành phần của bố cục editorial.
+
+## 5.2. Kích thước
+
+Trên desktop 1440x900:
+
+- Font size mục tiêu: 110-160px.
+- Font weight: 700-800 nếu font hỗ trợ.
+- Line-height: 0.9-1.05.
+- Letter spacing: điều chỉnh nhẹ để tạo cảm giác editorial.
+- Chiều rộng chữ có thể chiếm phần lớn Gallery.
+
+Font size phải scale theo chiều rộng và chiều cao thực tế.
+
+Không dùng giá trị cố định khiến nội dung tràn ở 1366x768.
+
+Không giảm font quá nhỏ đến mức chữ trở thành một heading thông thường.
+
+## 5.3. Layering
+
+Thứ tự lớp hiển thị:
+
+1. Home background.
+2. Dynamic Glow hoặc Custom Background.
+3. Editorial Typography.
+4. Playlist Cards.
+5. Điều khiển Gallery.
+
+Chữ phải nằm trên background và dưới playlist cards.
+
+Một phần chữ bị card che là có chủ đích.
+
+Đây không phải lỗi overlap.
+
+Sử dụng một Typography Layer riêng với `pointer-events: none`.
+
+Không để typography chặn thao tác click vào playlist.
+
+Không dùng z-index thiếu kiểm soát.
+
+## 5.4. Visual Contrast
+
+Chữ cần nhận diện được ở những khoảng trống giữa cards.
+
+Trong Dark Mode:
+
+- Sử dụng màu theme hoặc màu phối hợp phù hợp.
+- Opacity mục tiêu khoảng 12-22%, điều chỉnh theo màu nền.
+- Không tạo neon glow mạnh.
+- Không dùng text shadow dày.
+
+Trong Light Mode:
+
+- Chữ phải đủ đậm để không biến mất trên nền sáng.
+- Không quá tối khiến chữ cạnh tranh với cards.
+- Dùng màu theme hoặc màu phối hợp.
+
+Nếu Home sử dụng custom background ảnh:
+
+- Tự điều chỉnh lớp overlay hoặc màu chữ để tăng khả năng nhận diện.
+- Không che mất ảnh nền của người dùng.
+- Không để background quá phức tạp khiến chữ không đọc được.
+
+Không hardcode một màu tím cho mọi theme.
+
+---
+
+# 6. ĐỊNH NGHĨA VISUAL QUALITY CHO HOME
+
+Đối với Playlist Gallery, "đẹp" có nghĩa:
+
+1. Card trung tâm là đối tượng nổi bật nhất.
+2. Chữ nền đủ lớn để tạo cảm giác poster editorial.
+3. Chữ không cạnh tranh với artwork.
+4. Card và chữ có thứ tự lớp rõ ràng.
+5. Khoảng cách giữa các thành phần có chủ đích.
+6. Không xuất hiện nội dung thừa.
+7. Không có chữ tràn lên controls.
+8. Không phá bố cục gallery đã được duyệt.
+
+Không được thêm các hiệu ứng trang trí mới chỉ để lấp chỗ trống.
+
+Không được thêm nhiều đoạn mô tả.
+
+Không được tạo chữ chạy hoặc tự động cuộn.
+
+Chữ nền mặc định đứng yên.
+
+---
+
+# 7. TÙY CHỈNH NỘI DUNG CHỮ
+
+Trong trang **Hồ sơ & Cá nhân hóa**, bổ sung mục:
+
+**Chữ nền trang chủ**
+
+Tên tiếng Anh có thể là:
+
+`Editorial Typography`
+
+Cho phép:
+
+- Bật/tắt chữ nền.
+- Chỉnh dòng trên.
+- Chỉnh dòng dưới.
+- Chọn font.
+- Import font.
+- Khôi phục mặc định.
+
+## 7.1. Text Settings
+
+Dữ liệu:
+
+- `enabled`
+- `topText`
+- `bottomText`
+- `selectedFontId`
+- `fontSizeScale` nếu hỗ trợ.
+- `opacity` nếu hỗ trợ.
+
+Mặc định:
+
+- enabled = true.
+- topText = `YOUR MUSIC`.
+- bottomText = `YOUR WORLD`.
+- Font = font giao diện DoReMi hiện tại.
+
+Không tự chuyển chữ do người dùng nhập thành uppercase.
+
+Giữ nguyên Unicode gốc.
+
+Hỗ trợ:
+
+- Tiếng Việt.
+- Tiếng Anh.
+- Tiếng Trung.
+- Tiếng Nhật.
+- Tiếng Hàn.
+- Các ký tự Unicode hợp lệ khác.
+
+Không sử dụng HTML nội dung người dùng như một đoạn code được thực thi.
+
+## 7.2. Nội dung dài
+
+Nếu chữ quá dài:
+
+- Điều chỉnh font size trong giới hạn an toàn.
+- Cho phép wrapping hợp lý nếu thiết kế hỗ trợ.
+- Không tràn toàn bộ viewport.
+- Không che điều khiển Gallery.
+- Không giảm font xuống mức quá nhỏ.
+
+Có thể dùng cảnh báo ngắn khuyến khích nội dung ngắn.
+
+Không tự cắt hoặc sửa nội dung người dùng đã lưu mà không thông báo.
+
+## 7.3. Live Preview
+
+Trang Cá nhân hóa phải có preview.
+
+Preview cần thể hiện:
+
+- Hai dòng chữ.
+- Font đang chọn.
+- Màu nền đang áp dụng.
+- Artwork/card nằm ở lớp phía trước.
+
+Không dùng ảnh preview tĩnh không phản ánh lựa chọn thực.
+
+Nếu có thể, sử dụng cùng style tokens với Home Gallery.
+
+---
+
+# 8. FONT PERSONALIZATION
+
+## 8.1. Mặc định
+
+Tạm thời sử dụng font giao diện hiện tại của DoReMi.
+
+Không đổi font toàn ứng dụng.
+
+Custom Font chỉ tác động tới Editorial Background Typography.
+
+Không làm thay đổi:
+
+- Lyrics.
+- Mini Player.
+- Track List.
+- Playlist Card text.
+- Settings.
+- Now Playing.
+
+## 8.2. Import Font
+
+Người dùng có thể tự import font sau này, nhưng chức năng lựa chọn/import font phải được chuẩn bị và triển khai trong phạm vi yêu cầu này.
+
+Hỗ trợ:
+
+- TTF.
+- OTF.
+- WOFF.
+- WOFF2.
+
+Chức năng:
+
+- Import Font.
+- Chọn font đã import.
+- Xóa font tùy chỉnh nếu phù hợp.
+- Restore Default Font.
+
+Không tải font từ Internet.
+
+Không đóng gói font thương mại chưa có quyền sử dụng.
+
+## 8.3. Font Storage
+
+Khi import:
+
+- Kiểm tra phần mở rộng và nội dung file.
+- Kiểm tra dung lượng.
+- Kiểm tra file lỗi.
+- Sao chép vào vùng dữ liệu local của DoReMi.
+- Lưu metadata của font.
+- Không phụ thuộc đường dẫn nguồn ban đầu.
+- Không sửa file font gốc.
+- Không để mất font sau restart.
+
+Renderer không được tự truy cập filesystem tùy ý.
+
+Dùng IPC và cơ chế local asset an toàn đang có.
+
+## 8.4. Font Loading
+
+Ưu tiên dùng CSS FontFace hoặc cơ chế phù hợp với Electron hiện tại.
+
+Nếu file font không load được:
+
+- Không crash.
+- Không làm mất text.
+- Dùng font mặc định.
+- Hiển thị trạng thái lỗi phù hợp.
+
+Nếu font không hỗ trợ ký tự CJK hoặc tiếng Việt, dùng fallback hợp lý.
+
+---
+
+# 9. HOME RESPONSIVE
+
+Kiểm thử:
+
+- 1920x1080.
+- 1440x900.
+- 1366x768.
+- 1024x768.
+
+Ở màn hình nhỏ hơn:
+
+- Typography scale theo Gallery.
+- Không che Header.
+- Không che Mini Player.
+- Không gây horizontal overflow.
+- Không làm card trung tâm nhỏ đi chỉ vì chữ nền.
+- Không gây giật Gallery animation.
+
+Không thay đổi kích thước hoặc vị trí cards đang được duyệt, ngoại trừ những điều chỉnh responsive thực sự cần thiết.
+
+---
+
+# PHẦN B - COMPLETE NOW PLAYING REDESIGN
+
+# 10. MỤC TIÊU BỐ CỤC
+
+Thiết kế lại màn Now Playing theo ảnh tham khảo Hi-Fi Vinyl màu trắng.
+
+Bố cục mới:
+
+**Trái: VINYL HERO**
+
+- Đĩa than cực lớn.
+- Tonearm.
+- Circular Progress Ring.
+
+**Phải: TRACK INFORMATION + LYRICS/QUEUE**
+
+- Tên bài.
+- Nghệ sĩ.
+- Tab Lyrics/Queue.
+- Nội dung tương ứng.
+
+**Dưới: PLAYBACK CONTROL STRIP**
+
+- Các nút điều khiển nhạc.
+
+Bố cục này thay thế bố cục Now Playing cũ.
+
+Không quay về ba cột Track List / Vinyl / Lyrics.
+
+Không biến Now Playing thành dashboard nhiều card.
+
+---
+
+# 11. ĐỊNH NGHĨA "PREMIUM HI-FI DESIGN"
+
+Trong dự án này, một giao diện "cao cấp" phải đáp ứng những đặc điểm cụ thể.
+
+## 11.1. Visual Hierarchy
+
+Thứ tự chú ý:
+
+1. Vinyl.
+2. Tên bài hát.
+3. Lyrics hoặc Queue.
+4. Playback Controls.
+5. Metadata phụ.
+
+Không được:
+
+- Cho nút Settings nổi bật hơn vinyl.
+- Cho thông số FLAC/bitrate nổi bật hơn Title.
+- Dùng quá nhiều màu accent.
+- Đặt nhiều card có viền dày.
+- Dùng glow neon mạnh.
+- Dùng shadow cứng và đen.
+- Dùng icon kích thước không đồng nhất.
+- Để artwork bị méo.
+- Tạo nhiều khoảng trống không có chủ đích.
+
+## 11.2. Minimalism
+
+"Tối giản" không có nghĩa là xóa hết chức năng.
+
+Trong Standard Mode:
+
+- Vinyl vẫn là chủ thể chính.
+- Title và artist phải dễ đọc.
+- Lyrics/Queue phải dễ truy cập.
+- Playback Controls phải dễ thao tác.
+
+Ẩn metadata phụ và các điều khiển ít sử dụng vào nơi phù hợp.
+
+Không giấu những chức năng thiết yếu sau nhiều menu khó tìm.
+
+## 11.3. Spacing
+
+Sử dụng hệ spacing theo bội số 4px.
+
+Các mức chính:
+
+- 4px.
+- 8px.
+- 12px.
+- 16px.
+- 24px.
+- 32px.
+- 48px.
+
+Track Title, Artist, Tabs và nội dung Right Panel phải cùng một trục căn trái.
+
+Các nút cùng nhóm phải căn chỉnh thống nhất.
+
+Không dùng absolute positioning tùy tiện cho mọi thành phần.
+
+---
+
+# 12. TYPOGRAPHY NOW PLAYING
+
+Trên desktop 1440x900:
+
+**Track Title**
+- 36-48px.
+- Weight 600-700.
+- Line-height 1.05-1.15.
+
+**Artist**
+- 15-18px.
+- Weight 400-500.
+
+**Album/Metadata**
+- 11-13px.
+
+**Lyrics/Queue Tab**
+- 13-15px.
+- Weight 500-600.
+
+**Active Lyrics**
+- 24-32px.
+- Line-height khoảng 1.4-1.6.
+
+**Inactive Lyrics**
+- 19-24px.
+- Giảm độ nổi bật.
+
+**Queue Track**
+- 13-15px.
+
+**Time Labels**
+- 11-12px.
+- Ưu tiên tabular numerals.
+
+Không sử dụng toàn bộ màn hình với một kích thước chữ duy nhất.
+
+Không ép tên bài dài xuống font cực nhỏ.
+
+Không cắt ký tự tiếng Việt/Trung/Nhật/Hàn.
+
+---
+
+# 13. COLOR & MATERIAL
+
+## 13.1. Light Mode
+
+Màu tham khảo:
+
+- Background: #F5F5F3.
+- Surface: #FAFAF8.
+- Primary Text: #252525.
+- Secondary Text: #737373.
+- Divider: #E1E1DF.
+
+Không áp đặt các màu này nếu người dùng đã chọn theme riêng.
+
+## 13.2. Dark Mode
+
+Màu tham khảo:
+
+- Background: #101114.
+- Surface: #18191D.
+- Primary Text: #F2F2F1.
+- Secondary Text: #A2A2A5.
+- Divider: #303136.
+
+Không dùng đen tuyệt đối cho mọi vùng.
+
+## 13.3. Dynamic Colors
+
+Nếu bật Dynamic Colors:
+
+- Lấy palette hiệu lực từ artwork.
+- Tạo accent phù hợp.
+- Dùng accent cho progress ring.
+- Dùng accent cho Now Playing volume.
+- Có thể dùng ambient tint nhẹ.
+
+Không sử dụng gradient neon mạnh.
+
+Không đổi màu liên tục trong cùng một bài.
+
+Không ghi đè theme người dùng đã chọn.
+
+---
+
+# 14. VINYL HERO - KÍCH THƯỚC BẮT BUỘC
+
+Vinyl là thành phần lớn nhất của Now Playing.
+
+Đĩa phải được phóng cực lớn.
+
+## 14.1. Quy tắc kích thước
+
+Trên desktop 1440x900:
+
+- Vinyl Hero chiếm khoảng 52-58% chiều rộng khả dụng nếu cần để đáp ứng kích thước đĩa.
+- Right Panel chiếm phần còn lại.
+- Circular Progress Ring phải gần chạm mép trên/dưới vùng Hero.
+- Khoảng cách mục tiêu từ Ring đến mép trên: 8-16px.
+- Khoảng cách mục tiêu từ Ring đến mép dưới: 8-16px.
+
+Điều kiện này chỉ áp dụng khi chiều rộng vùng Hero cho phép.
+
+Nếu viewport hẹp hơn, tính đường kính theo kích thước thực tế để không gây clipping.
+
+Không kéo đĩa thành hình oval.
+
+Một phần rất nhỏ mép trái có thể bị crop có chủ đích.
+
+Không crop mất phần lớn progress ring.
+
+## 14.2. Vinyl Material
+
+Phải có:
+
+1. Outer Rim.
+2. Vinyl Surface.
+3. Circular Grooves.
+4. Reflection Highlights.
+5. Center Artwork Label.
+6. Spindle.
+7. Subtle Shadow.
+
+Grooves phải có nhiều vòng mảnh và thay đổi độ sáng nhẹ.
+
+Không chỉ dùng một hình tròn đơn sắc.
+
+Không dùng icon hoặc emoji thay cho vinyl.
+
+## 14.3. Center Label
+
+- Sử dụng artwork hiệu lực.
+- Crop tròn.
+- Không méo.
+- Có spindle tại tâm.
+- Quay cùng vinyl.
+- Cập nhật khi bài thay đổi.
+- Cập nhật khi artwork tùy chỉnh thay đổi.
+
+Không sử dụng hình giả trong production.
+
+---
+
+# 15. TONEARM - BÊN PHẢI ĐĨA
+
+Đây là yêu cầu khác với vị trí tonearm trong ảnh tham khảo.
+
+Tonearm phải nằm bên phải, gần ranh giới với khu vực Title.
+
+## 15.1. Vị trí
+
+- Pivot ở phía trên bên phải vùng đĩa.
+- Arm Tube hướng vào grooves.
+- Needle đặt hợp lý trên mặt đĩa.
+- Không chồng lên Title.
+- Không chồng lên Lyrics/Queue Tabs.
+- Không cắt qua tâm artwork.
+
+Vị trí phải thích ứng theo container.
+
+Không hardcode tọa độ chỉ đúng ở 1440x900.
+
+## 15.2. Hình dạng
+
+Tonearm phải gồm:
+
+- Pivot.
+- Arm Tube.
+- Headshell.
+- Cartridge.
+- Needle.
+- Metallic Highlights.
+- Shadow.
+
+Không được chỉ là một đường CSS thẳng trông như cây gậy.
+
+## 15.3. Animation
+
+Giữ animation hiện có nếu đã hoạt động:
+
+- Nhấc kim.
+- Nhấc đĩa cũ.
+- Hiện mâm trống.
+- Đưa đĩa mới xuống.
+- Đưa kim trở lại.
+
+Không làm AudioEngine chờ animation.
+
+Nếu Next liên tục, animation phải hủy/cập nhật theo Track ID mới nhất.
+
+---
+
+# 16. CIRCULAR PROGRESS RING
+
+Tạo một vòng tiến độ mảnh quanh vinyl.
+
+## 16.1. Thiết kế
+
+- Stroke width: khoảng 2-3px.
+- Cách mép vinyl khoảng 8-12px.
+- Có Base Track mờ.
+- Có Active Progress Arc.
+- Bắt đầu từ vị trí 12 giờ.
+- Chạy theo chiều kim đồng hồ.
+- Có thể sử dụng round line cap.
+
+Không tạo vòng quá dày.
+
+Không dùng nhiều lớp glow.
+
+## 16.2. Logic
+
+Sử dụng playback position thật.
+
+`progress = currentTime / duration`
+
+Phải xử lý:
+
+- Play.
+- Pause.
+- Seek.
+- Next/Previous.
+- Duration = 0.
+- Duration chưa xác định.
+- Loading.
+- Error.
+
+Không tạo timer giả độc lập với AudioEngine.
+
+Không để NaN làm lỗi SVG hoặc CSS.
+
+## 16.3. Màu
+
+Ưu tiên:
+
+1. Màu riêng Now Playing nếu người dùng đã cấu hình.
+2. Dynamic Album Accent nếu đang bật.
+3. Theme Accent.
+4. Fallback Accent.
+
+Không hardcode vòng màu đỏ chỉ vì ảnh tham khảo sử dụng màu đỏ.
+
+---
+
+# 17. RIGHT PANEL - LYRICS & QUEUE
+
+## 17.1. Header
+
+Hiển thị:
+
+- Track Title.
+- Artist.
+- Album hoặc một dòng metadata ngắn nếu có.
+
+Không dùng bài hát và nghệ sĩ giả trong ảnh tham khảo.
+
+## 17.2. Lyrics/Queue Tabs
+
+Có hai tab:
+
+- Lyrics.
+- Queue.
+
+Chỉ một tab active tại một thời điểm.
+
+Tab phải:
+
+- Dễ nhìn.
+- Có active state rõ.
+- Có keyboard focus.
+- Có hover state.
+- Không quá lớn.
+- Không làm Right Panel thành một bảng điều khiển nặng nề.
+
+## 17.3. Lyrics Mode
+
+Phải sử dụng lyrics thực tế.
+
+Hỗ trợ:
+
+- LRC có timestamp.
+- TXT lời tĩnh.
+- Embedded lyrics.
+- Sidecar lyrics.
+- Custom lyrics.
+
+LRC:
+
+- Highlight dòng hiện tại.
+- Auto-scroll mượt.
+- Click dòng để Seek.
+- Pause giữ dòng.
+- Seek cập nhật dòng.
+- Chuyển bài cập nhật đúng lời.
+
+TXT:
+
+- Giữ xuống dòng.
+- Cho phép cuộn.
+- Không giả lập timestamp.
+
+Không có lời:
+
+- Hiển thị empty state ngắn.
+- Có nút thêm lời nếu đã có chức năng.
+
+## 17.4. Lyrics đa ngôn ngữ
+
+Giữ hỗ trợ:
+
+- Tiếng Việt.
+- Tiếng Anh.
+- Tiếng Trung giản thể/phồn thể.
+- Tiếng Nhật.
+- Tiếng Hàn.
+
+Không thay đổi ký tự gốc.
+
+Không làm lỗi encoding parser hiện có.
+
+Không cắt glyph.
+
+Dòng dài phải wrap hợp lý.
+
+Các dòng cùng timestamp không được tự động xóa nếu là lời song ngữ.
+
+Không tạo bản dịch hoặc phiên âm giả.
+
+## 17.5. Queue Mode
+
+Queue phải lấy dữ liệu thật.
+
+Mỗi item:
+
+- Artwork nhỏ.
+- Tên bài.
+- Nghệ sĩ.
+- Thời lượng.
+- Playing Indicator.
+
+Không biến queue thành nhiều card lớn.
+
+Click bài phát theo queue logic hiện tại.
+
+Các thao tác remove/reorder chỉ triển khai hoặc giữ lại khi store hiện tại hỗ trợ an toàn.
+
+Không tạo queue giả.
+
+## 17.6. Tab Persistence
+
+Khi chuyển Lyrics/Queue:
+
+- Không reset nhạc.
+- Không reset progress.
+- Không đổi bài.
+- Không làm vinyl ngừng quay.
+
+Khi quay lại Lyrics, phải đồng bộ ngay với playback position hiện tại.
+
+Giữ lựa chọn tab trong phiên sử dụng.
+
+---
+
+# 18. FOCUS VINYL MODE
+
+ĐÂY LÀ CHẾ ĐỘ HIỂN THỊ THỨ HAI CỦA NOW PLAYING.
+
+Không tạo route mới nếu không cần thiết.
+
+Không tạo AudioEngine riêng.
+
+## 18.1. Mục tiêu
+
+Focus Vinyl Mode phải mang cảm giác trưng bày một thiết bị nghe nhạc Hi-Fi.
+
+Chỉ ưu tiên:
+
+- Vinyl.
+- Tonearm.
+- Circular Progress Ring.
+- Track Title.
+- Artist.
+- Minimal Controls.
+
+Ẩn:
+
+- Lyrics.
+- Queue.
+- Tabs.
+- Album metadata phụ.
+- Track lists.
+- Thông số kỹ thuật dài.
+- Những nút không cần thiết.
+
+Đây phải là một bố cục được thiết kế riêng, không chỉ xóa panel Lyrics khỏi Standard Mode.
+
+## 18.2. Bố cục
+
+Trên desktop lớn:
+
+- Vinyl nằm giữa hoặc lệch nhẹ về trái.
+- Đĩa giữ kích thước cực lớn.
+- Track Title và Artist nằm ở vùng phải, không có card bao quanh.
+- Khoảng trống giữa vinyl và chữ phải có chủ đích.
+- Không có panel phụ.
+
+Không bắt buộc đưa tên bài xuống dưới vinyl nếu điều đó khiến đĩa nhỏ đi.
+
+Trên màn hình hẹp có thể chuyển text xuống dưới.
+
+## 18.3. Kích thước Vinyl
+
+Ở 1440x900:
+
+- Ring gần chạm mép trên/dưới vùng Hero.
+- Có thể tăng kích thước so với Standard Mode khoảng 5-12% nếu không gây clipping.
+- Không làm mất tonearm.
+- Không để ring tràn khỏi viewport.
+
+## 18.4. Typography
+
+Track Title:
+
+- 40-56px trên desktop lớn.
+- Weight 600-700.
+- Tối đa khoảng hai dòng chính.
+
+Artist:
+
+- 16-20px.
+- Màu secondary.
+
+Không hiển thị metadata dài.
+
+## 18.5. Minimal Controls
+
+Giữ:
+
+- Previous.
+- Play/Pause.
+- Next.
+- Exit Focus Mode.
+
+Các controls khác có thể thu gọn hoặc mở qua menu phụ nếu cần.
+
+Nếu controls tự ẩn:
+
+- Hiện lại khi hover.
+- Hiện khi keyboard focus.
+- Không để vùng click vô hình chặn nội dung.
+- Nút thoát Focus luôn phải dễ tìm.
+
+Không để người dùng bị mắc kẹt trong Focus Mode.
+
+## 18.6. Chuyển đổi Mode
+
+Khi bật Focus:
+
+1. Lyrics/Queue biến mất.
+2. Vinyl mở rộng hoặc thay đổi vị trí.
+3. Title/Artist chuyển sang vị trí Focus.
+4. Controls thu gọn.
+5. Nhạc vẫn phát bình thường.
+
+Khi tắt Focus:
+
+1. Vinyl trở về Standard.
+2. Right Panel xuất hiện lại.
+3. Tab Lyrics/Queue trước đó được khôi phục.
+4. Lyrics đồng bộ theo thời gian hiện tại.
+5. Queue giữ nguyên trạng thái.
+
+Không reset bài hoặc progress.
+
+Không tạo animation thay đĩa khi chỉ chuyển mode.
+
+## 18.7. Theme
+
+Focus Mode phải hỗ trợ:
+
+- Dark Mode.
+- Light Mode.
+- Dynamic Album Colors.
+- Custom Theme.
+
+Progress Ring vẫn theo accent hiệu lực.
+
+Nền phải sạch.
+
+Không dùng gradient mạnh hoặc nhiều vật thể trang trí.
+
+---
+
+# 19. ĐỊNH NGHĨA MOTION QUALITY
+
+Trong dự án này, "mượt" có nghĩa:
+
+## 19.1. Hover
+
+- 120-180ms.
+- Ease-out.
+- Thay đổi nhẹ màu, opacity hoặc scale.
+
+## 19.2. Standard/Focus Transition
+
+- Khoảng 300-450ms.
+- Vinyl và text chuyển động đồng bộ.
+- Không giật.
+- Không flash layout.
+- Không reset playback.
+
+## 19.3. Vinyl Rotation
+
+- Khoảng 33 1/3 RPM.
+- Pause giữ góc.
+- Resume tiếp tục.
+
+## 19.4. Physical Disc Swap
+
+- Khoảng 1-1,2 giây nếu logic hiện tại hỗ trợ.
+- Có mâm trống.
+- Không giữ audio chờ animation.
+- Hủy transition cũ khi Next liên tục.
+
+## 19.5. Reduced Motion
+
+Nếu người dùng bật Reduce Motion:
+
+- Giảm/tắt chuyển động vinyl về mặt thị giác.
+- Giảm thời gian chuyển layout.
+- Giảm hiệu ứng trang trí.
+- Vẫn giữ audio và progress đúng.
+
+---
+
+# 20. NOW PLAYING CONTROL BAR
+
+Standard Mode có Control Bar gọn, cao mục tiêu khoảng 64-80px.
+
+Giữ:
+
+- Previous.
+- Play/Pause.
+- Next.
+- Shuffle.
+- Repeat.
+- Seek.
+- Current Time/Duration.
+- Volume/Mute.
+- Favorite nếu có.
+- Fade In/Out Quick Control.
+
+Play/Pause phải nổi bật hơn nút phụ.
+
+Các icon phải đồng nhất kích thước và optical alignment.
+
+Không đưa quá nhiều button vào một khung dày.
+
+## 20.1. Volume
+
+Trong Now Playing:
+
+- Filled Track dùng màu Now Playing hiệu lực.
+- Unfilled Track dùng màu tương phản.
+- Thumb rõ.
+
+Trong Mini Player:
+
+- Filled Track vẫn dùng Theme Accent người dùng đã chọn.
+
+Không sửa Mini Player chỉ để đồng nhất hai màu này.
+
+Không reset volume khi thay bài hoặc chuyển mode.
+
+## 20.2. Fade In/Out
+
+Giữ nút "Chuyển bài mượt" trong Now Playing.
+
+Popover:
+
+- Bật/tắt.
+- 0,5 giây.
+- 1 giây.
+- 2 giây.
+- 3 giây.
+
+Dùng cùng settings với Settings > Playback.
+
+Không tạo Fade state thứ hai.
+
+Nếu tính năng Fade đã có, tái sử dụng.
+
+Nếu chưa có, phải kiểm tra và tích hợp logic audio thật một cách an toàn, không chỉ tạo công tắc giả.
+
+Không tự biến Fade thành Crossfade hai nguồn âm thanh.
+
+---
+
+# 21. RESPONSIVE & WINDOWS SCALING
+
+Kiểm thử:
+
+- 1920x1080.
+- 1440x900.
+- 1366x768.
+- 1024x768.
+
+Windows scaling:
+
+- 100%.
+- 125%.
+- 150%.
+
+## 21.1. Standard Mode
+
+Ở 1440x900:
+
+- Vinyl gần sát mép Hero.
+- Ring hiện đầy đủ.
+- Tonearm ở bên phải.
+- Title và Lyrics/Queue đủ không gian.
+- Controls không bị cắt.
+
+Ở 1366x768:
+
+- Vinyl scale theo chiều cao.
+- Ring không mất.
+- Tonearm không che text.
+- Lyrics có thể cuộn.
+- Queue vẫn thao tác được.
+- Không có horizontal scrollbar.
+
+## 21.2. Focus Mode
+
+- Vinyl vẫn là thành phần lớn nhất.
+- Title không bị đè.
+- Nút thoát Focus không mất.
+- Controls không che ring.
+- Không phát sinh overflow.
+
+## 21.3. Home Typography
+
+- Chữ scale theo Gallery.
+- Card không bị thay đổi bố cục.
+- Mini Player không bị che.
+- Custom font không làm Home vỡ layout.
+
+Không dùng fixed sizes thiếu kiểm soát.
+
+---
+
+# 22. ACCESSIBILITY
+
+Phải có:
+
+- Keyboard Navigation.
+- Focus Visible.
+- Accessible Labels.
+- Tooltip cho icon-only buttons.
+- Reduced Motion.
+- Text Contrast.
+- Error States.
+- Empty States.
+
+Không để decorative typography chặn các thao tác.
+
+Không để overlay của Vinyl Hero chặn controls.
+
+Không để Electron drag regions che nút click.
+
+---
+
+# 23. PERFORMANCE
+
+Bắt buộc:
+
+- Không tạo AudioEngine mới.
+- Không rerender toàn bộ Now Playing mỗi animation frame.
+- Không đọc artwork lớn liên tục.
+- Không tính lại Dynamic Colors khi chỉ thay progress.
+- Không load lại font mỗi React render.
+- Không giữ object URLs hoặc listeners không cleanup.
+- Không query toàn bộ database chỉ để cập nhật một UI state nhỏ.
+- Không để Gallery và Vinyl animation cùng lúc gây giật audio.
+- Không để custom font hoặc custom background gây memory leak.
+
+Ưu tiên:
+
+- CSS transforms.
+- CSS animations.
+- SVG.
+- Memoization hợp lý.
+- Shared state có kiểm soát.
+- Local asset cache.
+
+---
+
+# 24. KIỂM THỬ CHỨC NĂNG
+
+## HOME
+
+1. Editorial Typography xuất hiện.
+2. Hai dòng chữ nằm phía sau cards.
+3. Card vẫn click được.
+4. Gallery vẫn điều hướng được.
+5. Thay Top Text hoạt động.
+6. Thay Bottom Text hoạt động.
+7. Bật/tắt typography hoạt động.
+8. Restore Default hoạt động.
+9. Text vẫn còn sau restart.
+10. Font mặc định hoạt động.
+11. Import font hoạt động.
+12. Font tùy chỉnh được giữ sau restart.
+13. Font lỗi fallback an toàn.
+14. Unicode hiển thị đúng.
+15. Dark/Light Mode hoạt động.
+16. Custom Background không bị lỗi.
+17. Mini Player không bị thay đổi.
+
+## NOW PLAYING
+
+1. Play/Pause hoạt động.
+2. Previous/Next hoạt động.
+3. Seek hoạt động.
+4. Progress Ring đồng bộ.
+5. Volume/Mute hoạt động.
+6. Shuffle/Repeat hoạt động.
+7. Vinyl quay đúng.
+8. Pause giữ góc quay.
+9. Tonearm đúng vị trí.
+10. Disc Swap không sai bài.
+11. Lyrics đồng bộ.
+12. Queue dùng dữ liệu thật.
+13. Lyrics/Queue không reset playback.
+14. Focus Mode bật/tắt được.
+15. Focus Mode không reset bài.
+16. Focus Mode giữ title/artist.
+17. Focus Mode giữ progress ring.
+18. Focus Mode vẫn điều khiển nhạc được.
+19. Fade không làm volume bị kẹt.
+20. Theme Preferences được tôn trọng.
+21. Dynamic Colors cập nhật theo bài.
+22. Không có dữ liệu giả.
+23. Không mất dữ liệu.
+24. FLAC vẫn phát bình thường.
+25. Ứng dụng hoạt động offline.
+
+---
+
+# 25. KIỂM THỬ THỊ GIÁC
+
+Nếu môi trường có khả năng render, phải kiểm tra screenshot thực tế.
+
+## 25.1. Home
+
+- Home Dark 1440x900.
+- Home Light 1440x900.
+- Home 1366x768.
+- Gallery có 7 playlist.
+- Gallery có 1 playlist.
+- Gallery không có playlist.
+- Custom Background.
+- Custom Font.
+- Text tiếng Việt có dấu.
+- Text tiếng Trung/Nhật/Hàn.
+
+## 25.2. Standard Now Playing
+
+- Light 1440x900.
+- Dark 1440x900.
+- Light 1366x768.
+- Dark 1366x768.
+- Lyrics.
+- Queue.
+- Tên bài rất dài.
+- Không có artwork.
+- Lyrics CJK.
+
+## 25.3. Focus Vinyl Mode
+
+- Light 1440x900.
+- Dark 1440x900.
+- Light 1366x768.
+- Dark 1366x768.
+- Tên bài dài.
+- Artwork màu sáng.
+- Artwork màu tối.
+- Không có artwork.
+
+Không khẳng định UI đã giống ảnh nếu chưa kiểm tra render thực tế.
+
+---
+
+# 26. TIÊU CHÍ VISUAL ACCEPTANCE
+
+## HOME
+
+- Typography đủ lớn.
+- Typography nằm phía sau cards.
+- Chữ không biến mất hoàn toàn.
+- Card trung tâm vẫn là chủ thể chính.
+- Không xuất hiện foreground heading thay cho chữ nền.
+- Không làm thay đổi Gallery đã được duyệt.
+- Không che Header/Mini Player.
+- Custom Font không phá layout.
+
+## STANDARD NOW PLAYING
+
+- Vinyl là đối tượng lớn nhất.
+- Vinyl gần sát mép trên/dưới Hero.
+- Progress Ring không bị cắt.
+- Tonearm thực sự nằm bên phải.
+- Tonearm không che Title.
+- Title rõ hơn metadata.
+- Lyrics/Queue có trục căn chỉnh nhất quán.
+- Control Bar gọn.
+- Không có quá nhiều card hoặc shadow.
+
+## FOCUS VINYL MODE
+
+- Vinyl là trung tâm.
+- Lyrics/Queue hoàn toàn ẩn.
+- Title và Artist là thông tin chính.
+- Không còn metadata thừa.
+- Controls tối giản.
+- Có thể thoát Focus dễ dàng.
+- Không có bố cục trống rỗng hoặc thiếu chủ đích.
+
+## GENERAL
+
+- Dark Mode và Light Mode đều đủ tương phản.
+- Không có text clipping.
+- Không có horizontal overflow.
+- Không có nút giả.
+- Không có animation giật.
+- Không có component che khuất thao tác.
+
+---
+
+# 27. QUY TRÌNH TRIỂN KHAI BA PASS
+
+Thực hiện liên tục, không hỏi xác nhận giữa các pass.
+
+## PASS A - FUNCTIONAL IMPLEMENTATION
+
+1. Audit source.
+2. Tìm Home/Gallery components.
+3. Thêm Typography Layer.
+4. Thêm settings và persistence.
+5. Thêm font import.
+6. Audit Now Playing.
+7. Xây Standard Layout.
+8. Xây Focus Mode.
+9. Kết nối Lyrics/Queue.
+10. Kết nối Circular Progress.
+11. Kết nối Controls.
+12. Chạy TypeScript check/build/test.
+
+Tự sửa lỗi trước khi tiếp tục.
+
+## PASS B - VISUAL REFINEMENT
+
+1. Căn Typography Home đúng layer.
+2. Chỉnh kích thước chữ như ảnh MISE.
+3. Chỉnh opacity và theme.
+4. Kiểm tra Custom Font preview.
+5. Phóng lớn vinyl.
+6. Đặt Tonearm bên phải.
+7. Hoàn thiện Grooves.
+8. Hoàn thiện Ring.
+9. Chỉnh Title và Right Panel.
+10. Hoàn thiện Control Bar.
+11. Hoàn thiện Focus Mode.
+12. Hoàn thiện Light/Dark.
+13. Kiểm tra lại chức năng.
+
+Không dừng chỉ vì giao diện đã render.
+
+## PASS C - QA & REGRESSION
+
+1. TypeScript check.
+2. Production build.
+3. Automated tests.
+4. Playback regression.
+5. Lyrics regression.
+6. Queue regression.
+7. Theme regression.
+8. Home Typography persistence.
+9. Custom Font loading.
+10. Standard/Focus transitions.
+11. Responsive tests.
+12. Visual inspection.
+13. Performance inspection.
+14. Accessibility inspection.
+15. Tự sửa lỗi phát hiện.
+
+Nếu không thể chạy một test trong môi trường hiện tại, ghi NOT RUN hoặc BLOCKED.
+
+Không tự báo PASS.
+
+---
+
+# 28. BÁO CÁO CUỐI
+
+Sau khi triển khai, báo cáo:
+
+## A. Changed Files
+Liệt kê file thực sự đã sửa.
+
+## B. Home Typography
+- Component.
+- Nội dung mặc định.
+- Tùy chỉnh text.
+- Custom font.
+- Persistence.
+- Theme integration.
+
+## C. Now Playing
+- Vinyl Hero.
+- Tonearm.
+- Circular Progress.
+- Lyrics/Queue.
+- Control Bar.
+- Standard Mode.
+- Focus Mode.
+
+## D. Functional Results
+Dùng DONE, PARTIAL hoặc BLOCKED.
+
+## E. Tests
+Dùng PASS, FAIL, NOT RUN hoặc BLOCKED.
+
+## F. Visual Review
+Kiểm tra Home, Standard Now Playing và Focus Mode.
+
+## G. Remaining Issues
+Liệt kê lỗi chưa xử lý nếu có.
+
+Không tuyên bố hoàn thành 100% nếu còn chức năng chưa thực hiện.
+
+---
+
+# FINAL DIRECTIVE
+
+Tôi muốn nâng cấp hai khu vực quan trọng của DoReMi.
+
+**HOME**
+
+Khôi phục hai dòng chữ nền khổng lồ:
+
+`YOUR MUSIC`
+
+`YOUR WORLD`
+
+Chúng phải nằm sau các playlist cards như ảnh MISE, có thể đổi nội dung và sử dụng font người dùng tự import.
+
+**NOW PLAYING**
+
+Thiết kế lại theo ảnh Hi-Fi Vinyl:
+
+- Đĩa cực lớn.
+- Tonearm phía bên phải.
+- Vòng progress mảnh quanh đĩa.
+- Lyrics/Queue switcher.
+- Control Bar tối giản.
+- Dynamic Theme.
+
+**FOCUS VINYL MODE**
+
+Tạo chế độ nghe nhạc tập trung chỉ còn:
+
+- Vinyl.
+- Tonearm.
+- Progress Ring.
+- Title.
+- Artist.
+- Minimal Controls.
+
+Trong dự án này:
+
+"Đẹp" = đúng tỷ lệ, căn chỉnh chính xác, thứ bậc thị giác rõ, chất liệu tinh tế, không có chi tiết thừa.
+
+"Sang trọng" = màu sắc có kiểm soát, bề mặt sạch, typography chỉn chu, animation có mục đích và độ tương phản tốt.
+
+"Tối giản" = giảm nhiễu thị giác nhưng giữ đầy đủ các chức năng cần thiết.
+
+**ƯU TIÊN CODE HOẠT ĐỘNG THẬT TRƯỚC, SAU ĐÓ HOÀN THIỆN UI ĐẾN MỨC CHẤT LƯỢNG CAO.**
+
+Không viết lại project.
+
+Không làm mất dữ liệu.
+
+Không phá Mini Player.
+
+Không làm thay đổi Album Coverflow hoặc Song Library.
+
+Không dừng sau Audit.
+
+Không dừng sau một component.
+
+**HÃY TRIỂN KHAI TOÀN BỘ YÊU CẦU TRỰC TIẾP TRÊN SOURCE DOREMI HIỆN TẠI, TỰ KIỂM THỬ VÀ CHỈ BÁO CÁO KẾT QUẢ SAU KHI HOÀN THÀNH PHẦN VIỆC CÓ THỂ THỰC HIỆN.**

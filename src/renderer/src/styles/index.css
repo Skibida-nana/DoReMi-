@@ -1,0 +1,376 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  :root,
+  :root[data-theme='dark'] {
+    color-scheme: dark;
+    --bg-base: #101114;
+    --bg-deep: #090A0D;
+    --bg-elevated: #181B22;
+    --surface-glass: rgba(24, 27, 34, 0.72);
+    --surface-glass-strong: rgba(20, 23, 30, 0.86);
+    --surface-glass-light: rgba(255, 255, 255, 0.06);
+    --surface-hover: rgba(255, 255, 255, 0.11);
+    --surface-input: rgba(255, 255, 255, 0.06);
+    --border-glass: rgba(255, 255, 255, 0.13);
+    --border-subtle: rgba(255, 255, 255, 0.09);
+    --text-primary: #F5F6F8;
+    --text-secondary: #B9BEC8;
+    --text-muted: #868D9B;
+    --accent-primary: #8B5CF6;
+    --accent-glow-rgb: 139, 92, 246;
+    --accent-secondary-rgb: 109, 40, 217;
+    --user-accent: #8B5CF6;
+    --user-accent-rgb: 139, 92, 246;
+    --user-accent-on: #FFFFFF;
+    --metallic-warm: #B89874;
+    --panel-shadow: 0 20px 44px rgba(0, 0, 0, 0.45);
+    --pill-shadow: 0 24px 60px rgba(0, 0, 0, 0.65);
+    --inset-highlight: rgba(255, 255, 255, 0.09);
+    --slider-track: rgba(255, 255, 255, 0.18);
+    --volume-track-empty: #2c2f3a;
+    --toggle-track-off: #3A4052;
+    --toggle-border-off: rgba(255, 255, 255, 0.16);
+    --scrollbar-thumb: rgba(255, 255, 255, 0.15);
+    --scrollbar-thumb-hover: rgba(255, 255, 255, 0.28);
+    --editorial-watermark: rgba(245, 246, 248, 0.18);
+
+    /* Hi-Fi Editorial Now Playing surface tokens (Dark) */
+    --np-bg: #101114;
+    --np-surface-bar: rgba(21, 22, 26, 0.92);
+    --np-divider: rgba(255, 255, 255, 0.085);
+    --np-ring-track: rgba(255, 255, 255, 0.13);
+    --np-text-primary: #F3F3F1;
+    --np-text-secondary: #A2A4AA;
+    --np-text-muted: #72757E;
+
+    /* Offline Windows CJK + Vietnamese + Latin font stack */
+    --font-display: 'Poppins', 'Segoe UI Variable Display', 'Segoe UI', 'Microsoft YaHei UI', 'Microsoft JhengHei UI', 'Yu Gothic UI', 'Meiryo', 'Malgun Gothic', system-ui, sans-serif;
+    --font-sans: 'Poppins', 'Segoe UI Variable Text', 'Segoe UI', 'Microsoft YaHei UI', 'Microsoft JhengHei UI', 'Yu Gothic UI', 'Meiryo', 'Malgun Gothic', system-ui, -apple-system, sans-serif;
+    --font-mono: 'Cascadia Mono', 'JetBrains Mono', 'Consolas', ui-monospace, SFMono-Regular, monospace;
+  }
+
+  :root[data-theme='light'] {
+    color-scheme: light;
+    --bg-base: #F6F7FB;
+    --bg-deep: #ECEEF5;
+    --bg-elevated: #FFFFFF;
+    --surface-glass: rgba(255, 255, 255, 0.82);
+    --surface-glass-strong: rgba(255, 255, 255, 0.94);
+    --surface-glass-light: rgba(18, 22, 34, 0.045);
+    --surface-hover: rgba(18, 22, 34, 0.08);
+    --surface-input: rgba(255, 255, 255, 0.88);
+    --border-glass: rgba(18, 22, 34, 0.12);
+    --border-subtle: rgba(18, 22, 34, 0.08);
+    --text-primary: #121520;
+    --text-secondary: #424A5E;
+    --text-muted: #646E84;
+    --panel-shadow: 0 18px 38px rgba(18, 22, 34, 0.08);
+    --pill-shadow: 0 20px 48px rgba(18, 22, 34, 0.14);
+    --inset-highlight: rgba(255, 255, 255, 0.85);
+    --slider-track: rgba(18, 22, 34, 0.16);
+    --volume-track-empty: #D2D6E2;
+    --toggle-track-off: #C5CCD9;
+    --toggle-border-off: rgba(18, 22, 34, 0.14);
+    --scrollbar-thumb: rgba(18, 22, 34, 0.18);
+    --scrollbar-thumb-hover: rgba(18, 22, 34, 0.34);
+    --editorial-watermark: rgba(22, 24, 30, 0.16);
+
+    /* Hi-Fi Editorial Now Playing surface tokens (Light — warm matte gallery) */
+    --np-bg: #F5F5F3;
+    --np-surface-bar: rgba(238, 238, 235, 0.94);
+    --np-divider: rgba(37, 37, 37, 0.1);
+    --np-ring-track: rgba(37, 37, 37, 0.11);
+    --np-text-primary: #222326;
+    --np-text-secondary: #686A70;
+    --np-text-muted: #8C8E94;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    font-family: var(--font-sans);
+    background-color: var(--bg-deep);
+    color: var(--text-primary);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+}
+
+.font-display {
+  font-family: var(--font-display);
+}
+
+.font-mono-tabular {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Semantic theme-aware utility surfaces */
+.lp-text-primary {
+  color: var(--text-primary);
+}
+
+.lp-text-secondary {
+  color: var(--text-secondary);
+}
+
+.lp-text-muted {
+  color: var(--text-muted);
+}
+
+/* Quality Preset GPU & Blur Tokens (Default: Balanced for smooth low-end Windows iGPU performance) */
+:root,
+:root[data-quality='balanced'] {
+  --glass-blur-panel: blur(10px);
+  --glass-blur-subtle: blur(8px);
+  --glass-blur-pill: blur(14px);
+}
+
+:root[data-quality='high'] {
+  --glass-blur-panel: blur(22px);
+  --glass-blur-subtle: blur(16px);
+  --glass-blur-pill: blur(26px);
+}
+
+:root[data-quality='power-saver'] {
+  --glass-blur-panel: none;
+  --glass-blur-subtle: none;
+  --glass-blur-pill: none;
+  --surface-glass: var(--bg-elevated);
+  --surface-glass-strong: var(--bg-elevated);
+  --panel-shadow: 0 8px 20px rgba(0, 0, 0, 0.22);
+  --pill-shadow: 0 10px 24px rgba(0, 0, 0, 0.28);
+}
+
+.lp-glass-panel {
+  background: var(--surface-glass);
+  backdrop-filter: var(--glass-blur-panel);
+  -webkit-backdrop-filter: var(--glass-blur-panel);
+  border: 1px solid var(--border-glass);
+  box-shadow:
+    inset 0 1px 0 var(--inset-highlight),
+    var(--panel-shadow);
+}
+
+.lp-glass-subtle {
+  background: var(--surface-glass-light);
+  backdrop-filter: var(--glass-blur-subtle);
+  -webkit-backdrop-filter: var(--glass-blur-subtle);
+  border: 1px solid var(--border-subtle);
+}
+
+.lp-glass-pill {
+  background: var(--surface-glass-strong);
+  backdrop-filter: var(--glass-blur-pill);
+  -webkit-backdrop-filter: var(--glass-blur-pill);
+  border: 1px solid var(--border-glass);
+  box-shadow:
+    inset 0 1px 0 var(--inset-highlight),
+    var(--pill-shadow);
+}
+
+.lp-surface-input {
+  background: var(--surface-input);
+  border: 1px solid var(--border-glass);
+  color: var(--text-primary);
+}
+
+.lp-surface-input::placeholder {
+  color: var(--text-muted);
+}
+
+.lp-btn-ghost {
+  background: var(--surface-glass-light);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  transition: background-color 150ms ease, color 150ms ease, border-color 150ms ease;
+}
+
+.lp-btn-ghost:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  border-color: var(--border-glass);
+}
+
+/* Multilingual / CJK-safe lyrics rendering */
+.lp-lyrics-text {
+  font-family: var(--font-sans);
+  line-height: 1.74;
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  text-wrap: pretty;
+}
+
+/* Editorial background glow transition */
+.lp-ambient-layer {
+  transition: background 800ms cubic-bezier(0.22, 1, 0.36, 1), opacity 600ms ease;
+}
+
+/* Vinyl continuous platter rotation — true 33 1/3 RPM (60 / 33.333 = 1.8s per revolution) */
+@keyframes lp-vinyl-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.lp-vinyl-rotor {
+  animation-name: lp-vinyl-spin;
+  animation-duration: 1.8s;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  will-change: transform;
+}
+
+.lp-vinyl-spinning {
+  animation: lp-vinyl-spin 1.8s linear infinite;
+  animation-play-state: running;
+}
+
+.lp-vinyl-paused {
+  animation: lp-vinyl-spin 1.8s linear infinite;
+  animation-play-state: paused;
+}
+
+/* Reduced motion override */
+.reduced-motion *,
+.reduced-motion *::before,
+.reduced-motion *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 120ms !important;
+}
+
+/* Pause decorative CSS animations automatically when Electron window is hidden/minimized */
+:root[data-app-hidden='true'] .lp-vinyl-rotor,
+:root[data-app-hidden='true'] .lp-vinyl-spinning {
+  animation-play-state: paused !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lp-vinyl-rotor,
+  .lp-vinyl-spinning {
+    animation-play-state: paused !important;
+  }
+}
+
+/* Refined accessible range sliders for Seek */
+input[type='range'].lp-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+input[type='range'].lp-slider:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+input[type='range'].lp-slider::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 9999px;
+  background: var(--slider-track);
+}
+
+input[type='range'].lp-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  margin-top: -4px;
+  border-radius: 9999px;
+  background: #FFFFFF;
+  border: 1.5px solid rgba(15, 17, 24, 0.35);
+  box-shadow: 0 0 10px rgba(var(--accent-glow-rgb), 0.7);
+  transition: transform 160ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+input[type='range'].lp-slider:hover:not(:disabled)::-webkit-slider-thumb {
+  transform: scale(1.22);
+}
+
+input[type='range'].lp-slider:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
+
+/* Volume slider — transparent native track over custom two-tone bar + crisp white thumb */
+input[type='range'].lp-volume-range {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+input[type='range'].lp-volume-range::-webkit-slider-runnable-track {
+  height: 5px;
+  border-radius: 9999px;
+  background: transparent;
+}
+
+input[type='range'].lp-volume-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 13px;
+  height: 13px;
+  margin-top: -4px;
+  border-radius: 9999px;
+  background: #ffffff;
+  border: 1.5px solid rgba(15, 17, 24, 0.45);
+  box-shadow:
+    0 1px 4px rgba(0, 0, 0, 0.48),
+    0 0 0 1px rgba(255, 255, 255, 0.22);
+  transition: transform 140ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 140ms ease;
+}
+
+input[type='range'].lp-volume-range:hover::-webkit-slider-thumb,
+input[type='range'].lp-volume-range:active::-webkit-slider-thumb {
+  transform: scale(1.1);
+  box-shadow:
+    0 2px 6px rgba(0, 0, 0, 0.56),
+    0 0 10px rgba(var(--volume-accent-rgb, 139, 92, 246), 0.55);
+}
+
+input[type='range'].lp-volume-range:focus-visible {
+  outline: none;
+}
+
+input[type='range'].lp-volume-range:focus-visible::-webkit-slider-thumb {
+  box-shadow:
+    0 0 0 3px rgba(var(--volume-accent-rgb, 139, 92, 246), 0.48),
+    0 1px 4px rgba(0, 0, 0, 0.55);
+}
+
+/* Theme-aware scrollbars */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}

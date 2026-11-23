@@ -1,0 +1,1702 @@
+# DOREMI v3 - GIAI ĐOẠN 6
+# FINAL DEVELOPMENT, PERFORMANCE OPTIMIZATION, BACKUP & WINDOWS RELEASE
+## FULL IMPLEMENTATION - PRODUCTION READINESS
+
+# 0. VAI TRÒ
+
+Bạn là một nhóm kỹ thuật cấp cao gồm:
+
+- Senior Electron Developer.
+- Senior React/TypeScript Engineer.
+- Senior Node.js Engineer.
+- Senior SQLite Engineer.
+- Senior Windows Desktop Engineer.
+- Senior DevOps/GitHub Actions Engineer.
+- Senior Performance Optimization Engineer.
+- Senior QA & Security Engineer.
+- Senior UI/UX Engineer.
+
+Hãy tiếp tục phát triển ứng dụng nghe nhạc offline **DoReMi** từ toàn bộ source code hiện tại.
+
+DoReMi là ứng dụng nghe nhạc trên Windows, được xây dựng với Electron, React, TypeScript và các công nghệ đang có trong project.
+
+Ứng dụng đã trải qua các giai đoạn phát triển trước và người dùng xác nhận rằng những lỗi UI, animation và các tính năng đã triển khai hiện đang hoạt động.
+
+**ĐÂY LÀ BASELINE ỔN ĐỊNH CẦN ĐƯỢC BẢO VỆ.**
+
+Không tự coi những lỗi cũ đã sửa là lỗi còn tồn tại.
+
+Không viết lại những tính năng đang hoạt động đúng.
+
+Mục tiêu Giai đoạn 6 là hoàn thiện sản phẩm để có thể sử dụng ổn định, sao lưu dữ liệu an toàn, tối ưu phần cứng và phân phối thành ứng dụng Windows thực sự.
+
+---
+
+# 1. YÊU CẦU QUAN TRỌNG NHẤT
+
+## FULL IMPLEMENTATION
+
+Tôi cho phép bạn thực hiện toàn bộ Giai đoạn 6.
+
+Quy trình:
+
+1. Đọc source code hiện tại.
+2. Audit chức năng và kiến trúc.
+3. Tạo checkpoint hoặc phương án rollback an toàn.
+4. Xác định các chức năng chưa hoàn thiện.
+5. Triển khai chức năng còn thiếu.
+6. Hoàn thiện Settings và dữ liệu.
+7. Tối ưu hiệu năng.
+8. Kiểm thử ổn định.
+9. Cấu hình Windows packaging.
+10. Tạo GitHub Actions workflow.
+11. Build Portable ZIP.
+12. Build Setup EXE.
+13. Kiểm thử các bản đóng gói trong khả năng môi trường.
+14. Tự sửa lỗi.
+15. Chạy regression tests.
+16. Báo cáo kết quả cuối cùng.
+
+**KHÔNG DỪNG SAU AUDIT.**
+
+**KHÔNG HỎI XÁC NHẬN SAU TỪNG TIỂU MỐC.**
+
+**KHÔNG CHỈ TẠO WORKFLOW RỒI TUYÊN BỐ HOÀN THÀNH.**
+
+**KHÔNG CHỈ BUILD THÀNH CÔNG MÀ BỎ QUA KIỂM THỬ EXE.**
+
+Nếu gặp lỗi kỹ thuật có thể xử lý an toàn, hãy tự sửa và tiếp tục.
+
+Chỉ dừng sớm khi gặp blocker thực sự như thiếu source bắt buộc, thiếu quyền truy cập, thiếu bí mật ký số cần thiết cho một tác vụ không thể thay thế, hoặc nguy cơ mất dữ liệu không thể bảo vệ.
+
+Nếu môi trường hiện tại không thể chạy GitHub Actions hoặc kiểm thử Windows GUI, hãy triển khai đầy đủ cấu hình và test có thể chạy, sau đó báo cáo rõ phần chưa được xác minh.
+
+Không giả vờ đã phát hành hoặc chạy EXE thành công.
+
+---
+
+# 2. THỨ TỰ ƯU TIÊN
+
+**P0 - DATA INTEGRITY**
+
+Không mất dữ liệu người dùng.
+
+**P1 - FUNCTIONAL CORRECTNESS**
+
+Các chức năng phải hoạt động thực tế.
+
+**P2 - AUDIO RELIABILITY**
+
+Âm thanh ổn định, không phát sai hoặc gián đoạn do UI.
+
+**P3 - PERFORMANCE**
+
+Sử dụng CPU, GPU và RAM hợp lý.
+
+**P4 - WINDOWS PACKAGING**
+
+Đóng gói đúng, khởi động được và hoạt động offline.
+
+**P5 - UI/UX CONSISTENCY**
+
+Giữ nguyên chất lượng giao diện đã duyệt.
+
+Không được làm giảm chất lượng âm thanh để cải thiện FPS.
+
+Không được xóa animation đang hoạt động đúng chỉ để giảm CPU.
+
+Không được hy sinh tính an toàn dữ liệu để đơn giản hóa code.
+
+---
+
+# 3. CÁC THÀNH PHẦN PHẢI BẢO TOÀN
+
+Giữ nguyên:
+
+- AudioEngine.
+- FLAC/MP3/WAV playback.
+- Library.
+- Stable Track ID.
+- SQLite.
+- Playlists.
+- Favorites.
+- Queue.
+- Shuffle/Repeat.
+- Listening History.
+- Statistics.
+- Artwork Overrides.
+- Lyrics Overrides.
+- Metadata Overrides.
+- Unicode/CJK Lyrics.
+- Dark/Light Mode.
+- Theme Colors.
+- Dynamic Album Colors.
+- Custom Home Background.
+- Profile và Avatar/GIF.
+- Custom Fonts.
+- Editorial Home Typography.
+- Playlist Gallery.
+- Album Coverflow.
+- Standard Now Playing.
+- Focus Vinyl Mode.
+- Circular Progress Ring.
+- Tonearm/Vinyl Animation.
+- Mini Player.
+- Fade In/Out nếu đã triển khai.
+- Toàn bộ cài đặt hiện có.
+
+Đặc biệt:
+
+**Lỗi animation Gallery một chiều đã được người dùng xác nhận khắc phục. Không tự viết lại carousel hoặc animation system.**
+
+Chỉ sửa một tính năng đã hoàn thành nếu phát hiện regression thực tế với bằng chứng cụ thể.
+
+Không thay đổi appId hoặc userData path chỉ vì ứng dụng đã đổi tên thành DoReMi.
+
+Không ghi bất kỳ thay đổi metadata nào vào file nhạc gốc.
+
+Không thêm streaming, tài khoản trực tuyến, quảng cáo hoặc telemetry.
+
+---
+
+# 4. CẤU TRÚC GIAI ĐOẠN 6
+
+Giai đoạn 6 chia thành 9 nhóm triển khai:
+
+**M6.1 - Baseline Audit & Safety Checkpoint**
+
+Kiểm tra project và bảo toàn phiên bản hoạt động hiện tại.
+
+**M6.2 - Automatic Music Folder Watching**
+
+Theo dõi thư mục nhạc, tự nhận diện bài mới và xử lý file mất liên kết.
+
+**M6.3 - ReplayGain & Sleep Timer**
+
+Hoàn thiện các chức năng âm thanh nâng cao đã được định nghĩa.
+
+**M6.4 - Windows Explorer Integration**
+
+Mở nhạc từ Windows Explorer, single-instance và file associations.
+
+**M6.5 - Backup, Restore & Relink**
+
+Sao lưu và khôi phục toàn bộ dữ liệu cá nhân.
+
+**M6.6 - Settings & Production UX**
+
+Hoàn thiện cài đặt, thông báo lỗi và các trạng thái giao diện.
+
+**M6.7 - Performance Optimization**
+
+Tối ưu CPU, GPU, RAM và startup.
+
+**M6.8 - Windows Packaging & GitHub Actions**
+
+Tạo Portable ZIP và Setup EXE.
+
+**M6.9 - Final Testing & Release Validation**
+
+Kiểm thử các chức năng, dữ liệu và bản phát hành.
+
+Thực hiện liên tục M6.1-M6.9 trong phạm vi công cụ cho phép.
+
+---
+
+# 5. M6.1 - BASELINE AUDIT & SAFETY CHECKPOINT
+
+## 5.1. Audit source
+
+Kiểm tra:
+
+- package.json.
+- package-lock.json hoặc lockfile thực tế.
+- Electron version.
+- Node.js version requirements.
+- React/TypeScript.
+- Vite/electron-vite.
+- SQLite dependencies.
+- better-sqlite3 nếu đang dùng.
+- music-metadata.
+- electron-builder.
+- IPC architecture.
+- Local media protocol.
+- UserData directory.
+- Artwork storage.
+- Profile storage.
+- Backup hiện tại.
+- Build scripts.
+- GitHub workflows hiện có.
+
+Không giả định tên file hoặc script.
+
+Đọc source trước khi sửa.
+
+## 5.2. Tạo checkpoint
+
+Trước khi thay đổi các thành phần quan trọng:
+
+- Kiểm tra trạng thái Git.
+- Không xóa thay đổi chưa commit.
+- Tạo phương án rollback.
+- Backup database nếu cần migration.
+- Lưu phiên bản cấu hình đang hoạt động.
+
+Nếu repository chưa được quản lý bằng Git, đề xuất và chuẩn bị phương án checkpoint an toàn, không tự xóa hoặc ghi đè source.
+
+Không tự force push hoặc thay đổi remote repository.
+
+## 5.3. Baseline Testing
+
+Chạy các test có sẵn:
+
+- TypeScript.
+- Build.
+- SQLite.
+- Playback logic.
+- Library.
+- Queue.
+- Lyrics.
+- Settings.
+
+Nếu project chưa có test tự động phù hợp, bổ sung những test cần thiết mà không làm thay đổi chức năng đang hoạt động.
+
+Ghi rõ test nào đã chạy và test nào chưa chạy được.
+
+---
+
+# 6. M6.2 - AUTOMATIC MUSIC FOLDER WATCHING
+
+## 6.1. Mục tiêu
+
+Người dùng có thể thêm một hoặc nhiều thư mục nhạc vào thư viện DoReMi.
+
+Khi có file nhạc mới trong những thư mục đó, ứng dụng tự cập nhật thư viện mà không cần import lại thủ công.
+
+Toàn bộ hoạt động offline.
+
+## 6.2. Chức năng
+
+Trong Settings > Library, cho phép:
+
+- Add Music Folder.
+- Remove Watched Folder.
+- Enable/Disable Auto Scan.
+- Scan Now.
+- View Scan Status.
+
+Có thể theo dõi nhiều thư mục.
+
+Khi thêm folder:
+
+- Quét các định dạng đang được hỗ trợ.
+- Đọc metadata.
+- Nhận diện bài đã có.
+- Chỉ thêm bài thực sự mới.
+- Không ghi đè user overrides.
+
+## 6.3. File mới
+
+Ví dụ người dùng có thư mục:
+
+`D:\Music`
+
+Người dùng sao chép thêm:
+
+`D:\Music\New Song.flac`
+
+DoReMi phải:
+
+1. Phát hiện sự thay đổi.
+2. Kiểm tra file đã ghi xong.
+3. Đọc metadata.
+4. Kiểm tra duplicate.
+5. Thêm bài vào Library nếu chưa tồn tại.
+6. Cập nhật giao diện mà không cần restart.
+
+Không tạo nhiều bản ghi khi nhận được nhiều filesystem events cho cùng một file.
+
+## 6.4. File bị di chuyển hoặc xóa
+
+Nếu file nhạc không còn ở đường dẫn cũ:
+
+- Không xóa playlist entry.
+- Không xóa favorite.
+- Không xóa listening history.
+- Không xóa metadata override.
+- Không xóa custom artwork/lyrics.
+
+Đánh dấu track là unavailable hoặc missing.
+
+Cho phép người dùng relink khi tìm được file mới.
+
+Không tự xóa vĩnh viễn bản ghi khi file chỉ tạm thời không truy cập được.
+
+## 6.5. File được đưa trở lại
+
+Khi đường dẫn hoặc file hợp lệ xuất hiện lại:
+
+- Khôi phục trạng thái available.
+- Không tạo Track ID mới nếu đã xác định được đó là cùng một track.
+- Không tạo duplicate.
+- Không làm mất liên kết playlist/history.
+
+## 6.6. Reliability
+
+Phải xử lý:
+
+- File đang copy dở.
+- Folder bị xóa.
+- Ổ đĩa ngoài chưa cắm.
+- Folder không có quyền truy cập.
+- File bị khóa.
+- Rename.
+- Move.
+- Duplicate events.
+- Filesystem watcher bị mất sự kiện.
+- Nhiều thay đổi cùng lúc.
+- Folder có hàng nghìn bài.
+
+Dùng debounce/batching phù hợp.
+
+Nếu fs.watch không đủ ổn định trong một trường hợp cụ thể, sử dụng giải pháp phù hợp với kiến trúc hiện tại và có cơ chế rescan đối chiếu.
+
+Không tạo vòng lặp scan toàn bộ ổ đĩa liên tục.
+
+## 6.7. Startup
+
+Khi khởi động lại:
+
+- Khôi phục danh sách watched folders.
+- Kiểm tra trạng thái.
+- Tái kết nối watcher.
+- Thực hiện rescan hợp lý để nhận diện những thay đổi khi ứng dụng đã đóng.
+
+Không khóa UI trong lúc quét thư viện lớn.
+
+---
+
+# 7. M6.3 - REPLAYGAIN
+
+## 7.1. Mục tiêu
+
+Hỗ trợ điều chỉnh loudness dựa trên ReplayGain metadata có sẵn trong file nhạc.
+
+Không yêu cầu tính toán ReplayGain mới cho toàn bộ thư viện.
+
+Không ghi tag vào file.
+
+## 7.2. Chế độ
+
+Trong Settings > Playback:
+
+- ReplayGain Off.
+- Track Gain.
+- Album Gain nếu metadata hỗ trợ.
+
+Mặc định: Off.
+
+Cho phép người dùng bật/tắt.
+
+## 7.3. Metadata
+
+Kiểm tra những tag ReplayGain được metadata parser hiện tại hỗ trợ.
+
+Ví dụ:
+
+- REPLAYGAIN_TRACK_GAIN.
+- REPLAYGAIN_ALBUM_GAIN.
+- REPLAYGAIN_TRACK_PEAK.
+- REPLAYGAIN_ALBUM_PEAK.
+
+Không giả định tất cả bài đều có tag.
+
+Nếu không có gain:
+
+- Dùng playback gain trung tính.
+- Không tự tạo giá trị gain ngẫu nhiên.
+- Không báo rằng file đã được normalize.
+
+## 7.4. Audio Safety
+
+Không được:
+
+- Làm âm thanh méo vì tăng gain không kiểm soát.
+- Làm thay đổi volume setting của người dùng.
+- Để volume bị kẹt sau khi đổi bài.
+- Làm hỏng Fade In/Out.
+- Thay đổi nguồn phát.
+- Viết lại AudioEngine chỉ để thêm ReplayGain.
+
+Phải tính đến clipping prevention, peak metadata và khả năng xử lý gain thực tế của audio pipeline.
+
+Nếu audio element.volume không đủ khả năng áp dụng gain như yêu cầu, phải đánh giá giải pháp kỹ thuật an toàn thay vì âm thầm giới hạn sai hoặc giả vờ ReplayGain đang hoạt động.
+
+Không thêm một audio playback instance riêng.
+
+Nếu cần Web Audio GainNode, tích hợp vào cùng playback pipeline hiện có và kiểm thử ảnh hưởng tới Fade, Mute, Volume và chuyển bài.
+
+## 7.5. Kiểm thử
+
+- ReplayGain Off.
+- Track Gain.
+- Album Gain.
+- File không có ReplayGain.
+- File có gain âm.
+- File có gain dương.
+- Peak metadata.
+- Chuyển bài.
+- Fade.
+- Volume.
+- Mute.
+- Restart.
+
+Không được tạo clipping nghe rõ trong những trường hợp có thể ngăn ngừa bằng dữ liệu gain/peak hợp lệ.
+
+---
+
+# 8. M6.3 - SLEEP TIMER
+
+## 8.1. Mục tiêu
+
+Cho phép người dùng hẹn giờ dừng nhạc.
+
+Các lựa chọn:
+
+- 15 phút.
+- 30 phút.
+- 45 phút.
+- 60 phút.
+- 90 phút.
+- Kết thúc bài hiện tại.
+- Tắt hẹn giờ.
+
+## 8.2. Giao diện
+
+Trong Settings > Playback hoặc khu vực điều khiển phù hợp:
+
+- Hiển thị trạng thái timer.
+- Hiển thị thời gian còn lại.
+- Cho phép Cancel Timer.
+- Không tạo quá nhiều nút trên Now Playing.
+
+Không cần mở một màn hình riêng.
+
+## 8.3. Logic
+
+Khi hết thời gian:
+
+1. Thực hiện Fade Out ngắn nếu được hỗ trợ an toàn.
+2. Dừng/Pause playback theo quy tắc Sleep Timer.
+3. Không phát bài tiếp theo.
+4. Xóa timer đang hoạt động.
+5. Khôi phục hệ số âm lượng bình thường cho lần phát sau.
+
+Không làm thay đổi mức volume do người dùng chọn.
+
+## 8.4. End of Track
+
+Ở chế độ "Kết thúc bài hiện tại":
+
+- Đợi bài đang phát kết thúc tự nhiên.
+- Không chuyển sang bài tiếp theo.
+- Dừng phát.
+- Xóa timer.
+
+Nếu người dùng chọn bài khác hoặc Seek, phải xử lý theo hành vi được định nghĩa rõ và nhất quán, không để timer kích hoạt nhầm nhiều lần.
+
+## 8.5. Timer Safety
+
+- Không chạy nhiều timer trùng nhau.
+- Pause/Resume không làm timer chạy sai.
+- Thay timer cũ phải hủy timer cũ.
+- Khi ứng dụng đóng, không để timer cũ gây tác động bất ngờ sau khi mở lại.
+- Timer không làm hỏng Shuffle/Repeat.
+
+Không sử dụng timer giả chỉ cập nhật UI.
+
+---
+
+# 9. M6.4 - WINDOWS EXPLORER INTEGRATION
+
+## 9.1. Mục tiêu
+
+Người dùng có thể mở file nhạc từ Windows Explorer bằng DoReMi.
+
+Hỗ trợ các định dạng DoReMi thực sự phát được, tối thiểu:
+
+- FLAC.
+- MP3.
+- WAV.
+
+Không đăng ký những định dạng chưa được kiểm thử.
+
+## 9.2. Open With
+
+Khi người dùng chọn:
+
+Open With > DoReMi
+
+Ứng dụng phải:
+
+1. Nhận đường dẫn file.
+2. Kiểm tra đường dẫn an toàn.
+3. Xác định file hợp lệ.
+4. Mở DoReMi.
+5. Đưa file vào ngữ cảnh phát phù hợp.
+6. Phát hoặc chờ phát theo hành vi đã quy định.
+
+Không tạo một AudioEngine thứ hai.
+
+## 9.3. Single Instance
+
+Khi DoReMi đang chạy:
+
+- Không mở một phiên app độc lập chỉ vì người dùng double-click file nhạc.
+- Chuyển đường dẫn vào phiên đang chạy.
+- Focus hoặc đưa cửa sổ hiện tại lên trước khi phù hợp.
+- Không làm mất queue hiện tại một cách bất ngờ.
+
+Phải kiểm tra Electron single-instance lock và handling của second-instance/open-file theo nền tảng thực tế.
+
+## 9.4. Unicode Paths
+
+Hỗ trợ đường dẫn Windows có:
+
+- Tiếng Việt có dấu.
+- Tiếng Trung.
+- Tiếng Nhật.
+- Tiếng Hàn.
+- Khoảng trắng.
+- Ký tự Unicode hợp lệ khác.
+
+Không tự split command-line argument sai tại dấu cách.
+
+Không xử lý đường dẫn bằng cách nối shell command không an toàn.
+
+## 9.5. Installer vs Portable
+
+Bản Setup EXE có thể đăng ký file associations thông qua cơ chế installer phù hợp.
+
+Không yêu cầu bản ZIP tự ý sửa Windows Registry khi người dùng chỉ giải nén.
+
+Bản Portable vẫn phải cho phép mở file bằng thao tác trong ứng dụng hoặc Open With nếu Windows được người dùng cấu hình thủ công.
+
+Không tự chiếm quyền mở mặc định đối với FLAC/MP3/WAV khi chưa có sự lựa chọn của người dùng.
+
+---
+
+# 10. M6.5 - BACKUP & RESTORE
+
+ĐÂY LÀ TÍNH NĂNG CỰC KỲ QUAN TRỌNG.
+
+## 10.1. Mục tiêu
+
+Cho phép sao lưu dữ liệu cá nhân của DoReMi thành **một file backup duy nhất**.
+
+Người dùng có thể chuyển sang máy tính khác hoặc cài lại Windows rồi khôi phục thư viện và cấu hình.
+
+Không cần Internet.
+
+## 10.2. Nội dung backup
+
+Phải bao gồm:
+
+- Playlists.
+- Favorites.
+- Queue.
+- Metadata overrides.
+- Custom artwork.
+- Custom lyrics.
+- Listening history.
+- Listening sessions/time segments cần thiết.
+- Statistics source data.
+- Profile name.
+- Avatar, bao gồm GIF.
+- Theme settings.
+- Dark/Light preference.
+- Custom accent colors.
+- Custom backgrounds.
+- Imported fonts.
+- Editorial Typography settings.
+- Playback settings.
+- ReplayGain preference.
+- Các cài đặt cá nhân khác đang lưu trong ứng dụng.
+
+Không chỉ backup playlist rồi bỏ qua dữ liệu cá nhân hóa.
+
+## 10.3. Không backup file nhạc gốc theo mặc định
+
+Mục tiêu là sao lưu dữ liệu ứng dụng, không phải nén toàn bộ bộ sưu tập FLAC.
+
+Không tự sao chép hàng trăm GB nhạc vào backup.
+
+Backup lưu thông tin tham chiếu và metadata cần thiết để khôi phục liên kết file.
+
+## 10.4. Backup File Format
+
+Sử dụng một định dạng container phù hợp và có cấu trúc rõ.
+
+Ví dụ file có phần mở rộng riêng như:
+
+`.doremi-backup`
+
+Bên trong có thể chứa:
+
+- Manifest.
+- Schema Version.
+- App Version.
+- Export Timestamp.
+- SQLite data hoặc dữ liệu xuất phù hợp.
+- Custom asset files.
+- Metadata cần khôi phục.
+
+Không bắt buộc phải dùng tên file hay định dạng nội bộ nêu trên nếu source đã có một cơ chế tương đương an toàn.
+
+## 10.5. Data Consistency
+
+Khi tạo backup:
+
+- Đảm bảo SQLite ở trạng thái nhất quán.
+- Không chỉ copy file database khi còn WAL writes chưa được xử lý.
+- Ưu tiên SQLite backup API hoặc cơ chế snapshot an toàn phù hợp.
+- Không làm ứng dụng bị đơ kéo dài.
+- Không làm mất dữ liệu đang cập nhật.
+
+Backup phải có kiểm tra cấu trúc và tính toàn vẹn.
+
+## 10.6. Restore
+
+Khi restore:
+
+1. Kiểm tra định dạng file.
+2. Kiểm tra version.
+3. Kiểm tra cấu trúc manifest.
+4. Kiểm tra những assets cần thiết.
+5. Kiểm tra dữ liệu trước khi thay đổi thư viện hiện tại.
+6. Tạo backup bảo vệ dữ liệu hiện tại.
+7. Thực hiện restore theo quy trình an toàn.
+8. Xác minh kết quả.
+9. Thông báo những đường dẫn nhạc cần relink.
+
+Không xóa dữ liệu hiện tại ngay khi người dùng chọn file backup.
+
+Nếu restore lỗi giữa chừng, phải có rollback hoặc phương án bảo vệ dữ liệu cũ.
+
+Không tin tưởng tùy ý đường dẫn nằm trong file backup.
+
+Chống path traversal khi giải nén assets.
+
+## 10.7. Relink Music Folders
+
+Sau khi chuyển máy, đường dẫn nhạc có thể thay đổi.
+
+Ví dụ:
+
+Máy cũ:
+
+`D:\Music\Album A\Song.flac`
+
+Máy mới:
+
+`E:\My Music\Album A\Song.flac`
+
+DoReMi cần hỗ trợ relink thư mục.
+
+Có thể đối chiếu:
+
+- Relative path.
+- File name.
+- Duration.
+- Metadata bổ sung khi cần.
+
+Không tự xác nhận hai file là cùng một bài chỉ vì trùng tên.
+
+Nếu có nhiều file có thể trùng khớp, yêu cầu người dùng chọn thay vì relink sai.
+
+Sau khi relink:
+
+- Stable Track ID không đổi.
+- Playlist vẫn đúng.
+- Favorites vẫn đúng.
+- History vẫn đúng.
+- Custom metadata/artwork/lyrics vẫn đúng.
+
+## 10.8. Backup UI
+
+Trong Settings > Backup & Restore:
+
+- Create Backup.
+- Restore Backup.
+- Chọn nơi lưu.
+- Trạng thái xử lý.
+- Kết quả.
+- Cảnh báo nếu có lỗi.
+
+Không tạo nhiều bước khó hiểu nếu không cần.
+
+Không tuyên bố backup thành công trước khi file được ghi và xác minh.
+
+---
+
+# 11. M6.6 - SETTINGS & PRODUCTION UX
+
+## 11.1. Settings Organization
+
+Giữ cấu trúc hiện có và hoàn thiện:
+
+**Playback**
+- Fade.
+- ReplayGain.
+- Sleep Timer.
+- Resume Playback.
+
+**Library**
+- Music Folders.
+- Auto Scan.
+- Scan Now.
+- Missing Files.
+
+**Backup & Restore**
+- Create Backup.
+- Restore Backup.
+- Relink.
+
+**Performance**
+- High Quality.
+- Balanced.
+- Power Saver.
+- Reduce Motion nếu đang được quản lý ở đây hoặc liên kết đến trang cá nhân hóa tương ứng.
+
+**General**
+- Startup preferences.
+- Windows integration.
+- About.
+- Application Version.
+
+**Personalization**
+
+Dẫn đến đúng trang Hồ sơ & Cá nhân hóa đang có.
+
+Không tạo bản sao theme settings.
+
+## 11.2. Error States
+
+Ứng dụng phải xử lý rõ ràng khi:
+
+- File nhạc không tồn tại.
+- Không có quyền đọc.
+- SQLite không mở được.
+- Backup lỗi.
+- Restore lỗi.
+- Import avatar/font lỗi.
+- Folder không truy cập được.
+- Audio decoding lỗi.
+- Native module không load được.
+
+Thông báo ngắn, dễ hiểu bằng ngôn ngữ giao diện đang sử dụng.
+
+Không hiển thị stack trace dài cho người dùng thông thường.
+
+Có thể lưu diagnostic logs cục bộ.
+
+Không ghi thông tin cá nhân nhạy cảm hoặc đường dẫn đầy đủ vào log nếu không thực sự cần.
+
+---
+
+# 12. M6.7 - PERFORMANCE OPTIMIZATION
+
+## 12.1. Mục tiêu phần cứng
+
+DoReMi cần chạy ổn định trên cả laptop Windows cấu hình tương đối thấp.
+
+Cấu hình tham chiếu:
+
+- Intel Core i5-5200U.
+- RAM 8GB.
+- GPU tích hợp.
+- Windows 10/11 64-bit nếu các phiên bản Electron/dependency hiện tại còn hỗ trợ.
+
+Không tự cam kết chạy trên Windows version không được Electron hiện tại hỗ trợ.
+
+## 12.2. Nguyên tắc
+
+- Đo trước khi tối ưu.
+- Chỉ sửa điểm nghẽn thực tế.
+- Giữ chất lượng FLAC.
+- Giữ UI đã duyệt.
+- Không bỏ animation Gallery/Vinyl.
+- Không tạo kiến trúc phức tạp chỉ để giảm vài MB RAM nếu không có lợi ích đáng kể.
+
+## 12.3. Đo hiệu năng
+
+Đo khi có thể:
+
+- CPU Idle.
+- RAM Idle.
+- CPU khi phát FLAC.
+- RAM khi phát FLAC.
+- Vinyl Rotation.
+- Gallery Animation.
+- Standard/Focus switching.
+- Lyrics Sync.
+- Statistics.
+- Folder Scan.
+- Startup Time.
+- Memory Growth sau thời gian sử dụng.
+
+Ưu tiên kiểm tra cả Development và Packaged Build.
+
+Không tự tạo số liệu benchmark.
+
+## 12.4. Mục tiêu tham khảo
+
+Đây là mục tiêu để đánh giá, không phải kết quả đo đã được xác nhận:
+
+- Animation hướng tới 60 FPS trên máy đủ mạnh.
+- Power Saver có thể giảm hiệu ứng để ưu tiên ổn định.
+- Play/Pause và các thao tác thông thường cần phản hồi nhanh.
+- RAM và CPU cần được đo thực tế để xác định ngưỡng hợp lý.
+- Không bị tăng RAM liên tục khi chuyển trang nhiều lần.
+
+Không tuyên bố ứng dụng đạt một mức FPS/RAM cố định nếu chưa kiểm thử.
+
+## 12.5. UI Optimization
+
+Rà soát:
+
+- React rerenders.
+- Large artwork.
+- Thumbnail caching.
+- Dynamic palette caching.
+- GIF avatar rendering.
+- SVG progress.
+- Vinyl transforms.
+- Gallery transforms.
+- backdrop-filter.
+- box-shadow.
+- animated gradients.
+- object URL cleanup.
+- IPC subscriptions.
+- SQLite queries.
+
+Không dùng React setState mỗi animation frame nếu CSS/animation engine có thể giải quyết.
+
+Không tính lại palette mỗi lần progress tăng.
+
+Không chạy animation trang trí khi màn hình tương ứng không hiển thị.
+
+## 12.6. Performance Presets
+
+Nếu đã có:
+
+- High Quality.
+- Balanced.
+- Power Saver.
+
+Hãy hoàn thiện và kiểm thử.
+
+Nếu chưa có, triển khai theo kiến trúc Settings/Personalization hiện tại.
+
+Mặc định đề xuất Balanced.
+
+Các chế độ chỉ điều chỉnh visual effects và những tác vụ phụ có thể tối ưu.
+
+Không giảm chất lượng decode hoặc thay đổi sample dữ liệu âm thanh để đạt FPS.
+
+Reduced Motion phải là một tùy chọn độc lập và được tôn trọng.
+
+---
+
+# 13. M6.8 - WINDOWS PACKAGING
+
+ĐÂY LÀ PHẦN BẮT BUỘC QUAN TRỌNG NHẤT CỦA GIAI ĐOẠN 6.
+
+## 13.1. Mục tiêu
+
+Tôi muốn người dùng có thể tải DoReMi từ GitHub và sử dụng trên Windows mà không cần biết lập trình.
+
+Không cần:
+
+- Cài Node.js.
+- Cài npm.
+- Mở terminal.
+- Chạy npm install.
+- Chạy npm run dev.
+- Cài Visual Studio Build Tools trên máy người dùng.
+
+Phải phân phối những runtime dependencies cần thiết bên trong bản đóng gói.
+
+## 13.2. Hai loại phát hành
+
+**A. DoReMi Portable ZIP**
+
+Người dùng:
+
+1. Tải ZIP.
+2. Giải nén.
+3. Mở thư mục.
+4. Double-click `DoReMi.exe`.
+5. Sử dụng ứng dụng.
+
+ZIP phải chứa đầy đủ các file cần để chạy.
+
+Không được chỉ nén source code rồi gọi đó là portable build.
+
+Không được chỉ nén file EXE nếu ứng dụng còn phụ thuộc các DLL, resources hoặc thư mục khác.
+
+Ưu tiên đóng gói toàn bộ thư mục Windows unpacked và nén đúng cấu trúc.
+
+**B. DoReMi Setup EXE**
+
+Bản cài đặt Windows thông thường.
+
+Có:
+
+- Product Name: DoReMi.
+- Application Icon nếu asset hợp lệ đã có.
+- Start Menu Shortcut nếu phù hợp.
+- Desktop Shortcut theo tùy chọn.
+- Uninstall Support.
+- File Associations nếu đã triển khai và được người dùng lựa chọn.
+
+Không tự tạo một icon chất lượng thấp nếu project chưa có asset.
+
+## 13.3. Lưu ý Portable
+
+Phải phân biệt:
+
+**No-install ZIP:** Giải nén và chạy được, dữ liệu có thể vẫn lưu trong userData của Windows.
+
+**Fully Portable Data Mode:** Cả dữ liệu người dùng đi theo thư mục ứng dụng.
+
+Yêu cầu bắt buộc hiện tại là No-install ZIP.
+
+Không tự chuyển SQLite/userData sang cạnh EXE khi chưa có migration an toàn, vì có thể khiến người dùng mất thư viện đang có.
+
+Nếu có thể xây dựng Fully Portable Data Mode mà không phá tính tương thích, hãy triển khai thành một tùy chọn riêng có kiểm thử, không mặc định thay đổi đường dẫn dữ liệu cũ.
+
+## 13.4. Packaging Architecture
+
+Kiểm tra cấu hình electron-builder hiện có.
+
+Xác minh:
+
+- Main process bundle.
+- Preload bundle.
+- Renderer bundle.
+- Production dependencies.
+- Native addons.
+- Database initialization.
+- Local media protocol.
+- Custom asset paths.
+- Artwork storage.
+- Lyrics storage.
+- Fonts.
+- Profile assets.
+
+Không dùng các đường dẫn development trong production.
+
+Không giả định working directory là project root khi mở EXE.
+
+---
+
+# 14. XỬ LÝ CÁC LỖI BUILD CŨ
+
+Ứng dụng từng gặp các vấn đề liên quan đến npm, Windows và dependencies.
+
+Phải kiểm tra kỹ để tránh lặp lại.
+
+## 14.1. npm.ps1 Execution Policy
+
+Lỗi từng gặp:
+
+`npm.ps1 cannot be loaded because running scripts is disabled on this system`
+
+Khi hướng dẫn người dùng chạy PowerShell trên Windows, ưu tiên:
+
+`npm.cmd`
+
+Không yêu cầu người dùng tắt toàn bộ PowerShell security chỉ để build.
+
+GitHub Actions workflow phải dùng shell và lệnh phù hợp.
+
+## 14.2. ENOENT package.json
+
+Lỗi từng gặp:
+
+`Could not read package.json`
+
+Nguyên nhân có thể do chạy npm sai thư mục.
+
+Workflow phải:
+
+- Checkout đúng repository.
+- Xác định project root.
+- Sử dụng working-directory nếu project nằm trong thư mục con.
+- Kiểm tra package.json tồn tại trước khi cài dependencies.
+
+Không chạy build trong C:\WINDOWS\system32.
+
+## 14.3. Rolldown Native Binding
+
+Lỗi từng gặp liên quan đến:
+
+`@rolldown/binding-win32-x64-msvc`
+
+Phải kiểm tra:
+
+- Rolldown/Vite versions.
+- Optional native dependencies.
+- Lockfile.
+- Platform architecture.
+- npm install behavior.
+
+Ưu tiên cài dependencies sạch bằng lockfile hợp lệ.
+
+Không dùng workaround `--no-save --package-lock=false` làm nền tảng lâu dài nếu nó khiến build không tái lập được.
+
+Không dùng `--omit=optional` nếu dự án cần optional native bindings.
+
+Không sửa thủ công node_modules rồi dựa vào đó để GitHub Actions build.
+
+Nếu dependency bị thiếu, phải sửa cấu hình hoặc lockfile theo nguyên nhân thực tế và kiểm tra lại trong clean environment.
+
+## 14.4. better-sqlite3
+
+Kiểm tra native module better-sqlite3 nếu project đang sử dụng.
+
+Phải xử lý đúng:
+
+- Electron ABI.
+- Windows x64.
+- Native module rebuild.
+- Production dependency inclusion.
+- ASAR unpack requirements.
+- Runtime loading.
+
+Nếu electron-builder đã có cơ chế rebuild native dependencies phù hợp, sử dụng lại.
+
+Nếu cần cấu hình rebuild hoặc unpack, chỉ thêm sau khi kiểm tra.
+
+Không để ứng dụng chạy Dev được nhưng bản EXE báo lỗi không tìm thấy `.node`.
+
+Không vô hiệu hóa SQLite để làm build thành công.
+
+## 14.5. npm WARN Deprecated
+
+Các cảnh báo:
+
+- inflight.
+- rimraf.
+- glob.
+- boolean.
+- Các dependency deprecated khác.
+
+Phân biệt:
+
+**Warning:** Cảnh báo cần đánh giá.
+
+**Error:** Lỗi làm build thất bại.
+
+Không bắt buộc nâng cấp toàn bộ dependencies chỉ vì có warning.
+
+Nếu cập nhật dependency, đánh giá compatibility và regression trước.
+
+Không sử dụng `npm audit fix --force` tùy tiện.
+
+---
+
+# 15. GITHUB ACTIONS - WINDOWS RELEASE PIPELINE
+
+## 15.1. Workflow
+
+Tạo hoặc hoàn thiện GitHub Actions workflow dành cho Windows.
+
+Ví dụ tên file:
+
+`.github/workflows/build-windows.yml`
+
+Ưu tiên:
+
+- Windows runner.
+- Windows x64.
+- Node.js version phù hợp với project.
+- Lockfile-based install.
+- Build.
+- Package.
+- Validate.
+- Upload artifacts.
+
+Không tự đoán phiên bản Node hoặc Electron. Đọc package.json và engines trước.
+
+Không hardcode script chưa tồn tại.
+
+## 15.2. Trigger
+
+Workflow có thể chạy bằng:
+
+- workflow_dispatch.
+- Push tag phát hành.
+- Pull request hoặc push vào nhánh phát triển nếu phù hợp cho CI.
+
+Phân biệt:
+
+**CI Build:** Kiểm thử source, không cần phát hành.
+
+**Release Build:** Tạo ZIP/EXE để tải.
+
+Không tự publish GitHub Release hoặc đẩy code lên remote khi người dùng chưa yêu cầu hành động đó.
+
+## 15.3. Clean Install
+
+Phải cài dependencies trên môi trường sạch.
+
+Ưu tiên:
+
+`npm ci`
+
+Nếu lockfile hiện tại không hợp lệ, sửa vấn đề lockfile trước.
+
+Không dựa vào node_modules của máy người dùng.
+
+Không yêu cầu AI Studio tự upload node_modules lên GitHub.
+
+## 15.4. Build
+
+Chạy những script thực sự tồn tại trong project.
+
+Có thể gồm:
+
+- Typecheck.
+- Unit tests.
+- Integration tests.
+- Electron/Vite build.
+- electron-builder packaging.
+
+Không tạo workflow giả với tên script không khớp package.json.
+
+## 15.5. Native Dependencies
+
+Trước packaging hoặc trong lifecycle phù hợp:
+
+- Đảm bảo native addons tương thích Electron.
+- Kiểm tra better-sqlite3.
+- Kiểm tra Rolldown binding.
+- Kiểm tra các runtime dependencies cần thiết.
+- Đảm bảo bundled assets đúng vị trí.
+
+Không để thành công của bước build renderer che mất lỗi đóng gói main process hoặc native dependencies.
+
+## 15.6. Artifact Output
+
+Đầu ra phải có:
+
+**DoReMi Windows Portable ZIP**
+
+**DoReMi Windows Setup EXE**
+
+Có thể thêm checksums SHA-256 để người dùng xác minh file.
+
+Tên file nên phản ánh:
+
+- Product.
+- Version.
+- Platform.
+- Architecture.
+
+Ví dụ quy ước:
+
+`DoReMi-vX.Y.Z-Windows-x64-Portable.zip`
+
+`DoReMi-vX.Y.Z-Windows-x64-Setup.exe`
+
+Đây chỉ là quy ước tên, phải dùng version thực tế.
+
+Không tạo tên file version giả.
+
+## 15.7. GitHub Artifact
+
+Upload build outputs bằng phiên bản action được hỗ trợ.
+
+Không đưa vào artifact:
+
+- node_modules development không cần thiết.
+- Source secrets.
+- API keys.
+- File nhạc cá nhân của người phát triển.
+- SQLite chứa dữ liệu cá nhân của người phát triển.
+- Custom avatar/background/font riêng của người phát triển.
+- Thư mục userData cá nhân.
+
+Release artifacts chỉ gồm ứng dụng và tài nguyên cần để chạy.
+
+## 15.8. Failure Handling
+
+Workflow phải thất bại rõ nếu:
+
+- Install dependencies lỗi.
+- TypeScript check lỗi.
+- Build lỗi.
+- Native rebuild lỗi.
+- Packaging lỗi.
+- ZIP thiếu EXE.
+- Installer không được tạo.
+- Runtime dependencies cần thiết bị thiếu theo kiểm tra hiện có.
+
+Không che lỗi bằng `continue-on-error` cho các bước bắt buộc.
+
+Không upload một thư mục rỗng rồi báo release thành công.
+
+---
+
+# 16. WINDOWS EXE SMOKE TEST
+
+GitHub Actions build thành công CHƯA đủ.
+
+Cần có kế hoạch kiểm thử bản EXE.
+
+## 16.1. Artifact Verification
+
+Kiểm tra:
+
+- Portable ZIP tồn tại.
+- ZIP giải nén được.
+- EXE nằm đúng thư mục.
+- Resources tồn tại.
+- Native modules cần thiết tồn tại.
+- Setup EXE tồn tại.
+- Checksums được tạo nếu triển khai.
+
+## 16.2. Startup Smoke Test
+
+Trên Windows:
+
+- Giải nén ZIP vào thư mục mới.
+- Chạy `DoReMi.exe`.
+- Kiểm tra cửa sổ xuất hiện.
+- Kiểm tra không crash ngay.
+- Kiểm tra main/preload/renderer tải được.
+- Kiểm tra database initialization.
+- Kiểm tra local protocol.
+- Kiểm tra lỗi runtime nếu có.
+
+Nếu GitHub runner không thể kiểm thử GUI đáng tin cậy, không được ghi PASS cho phần mở ứng dụng.
+
+Phải cung cấp checklist kiểm thử thủ công trên Windows thật.
+
+## 16.3. Playback Smoke Test
+
+Kiểm tra:
+
+1. Import FLAC.
+2. Phát FLAC.
+3. Pause/Resume.
+4. Seek.
+5. Volume.
+6. Next/Previous.
+7. Mini Player.
+8. Now Playing.
+9. Vinyl Rotation.
+10. Lyrics.
+11. Queue.
+12. Album/Playlist.
+13. Database persistence.
+
+Không đưa file nhạc thương mại có bản quyền vào repository chỉ để làm test.
+
+Dùng fixtures hợp pháp hoặc file test do dự án sở hữu.
+
+## 16.4. Restart Test
+
+Sau khi đóng ứng dụng:
+
+- Mở lại.
+- Library vẫn còn.
+- Playlists vẫn còn.
+- Favorites vẫn còn.
+- Lyrics overrides vẫn còn.
+- Custom artwork vẫn còn.
+- Theme vẫn còn.
+- Profile vẫn còn.
+- Imported fonts vẫn còn.
+- Listening history vẫn còn.
+
+Không để packaged build tạo database khác làm người dùng tưởng mất dữ liệu.
+
+## 16.5. Offline Test
+
+Ngắt Internet và chạy ứng dụng.
+
+Phải hoạt động:
+
+- Mở app.
+- Library.
+- Playback.
+- Lyrics local.
+- Artwork.
+- Playlist.
+- Profile.
+- Theme.
+- Settings.
+- Statistics.
+- Backup/Restore.
+
+Không bắt buộc Internet để mở giao diện.
+
+GitHub chỉ được dùng làm nơi build/phân phối, không phải backend phục vụ phát nhạc.
+
+---
+
+# 17. SECURITY & DATA SAFETY
+
+Kiểm tra:
+
+- IPC validation.
+- Context isolation.
+- Node integration.
+- File path validation.
+- Custom protocol restrictions.
+- Import file validation.
+- Backup archive validation.
+- Font import.
+- Image/GIF import.
+- SQLite operations.
+- File associations.
+- Command-line arguments.
+
+Không cấp quyền filesystem toàn hệ thống cho Renderer một cách không cần thiết.
+
+Không sử dụng shell execution để mở file nhạc bằng cách nối trực tiếp input không đáng tin cậy.
+
+Không đưa userData vào thư mục source hoặc thư mục resources đóng gói.
+
+Không tạo chức năng tự động tải code từ Internet.
+
+Không tự đánh dấu bản EXE là đã ký số nếu chưa có certificate thực tế.
+
+Nếu EXE chưa được ký số, báo rõ trạng thái unsigned và những cảnh báo Windows có thể xảy ra.
+
+Không yêu cầu vô hiệu hóa Microsoft Defender hoặc SmartScreen để che vấn đề.
+
+---
+
+# 18. FINAL REGRESSION TEST MATRIX
+
+Phải kiểm tra những nhóm sau.
+
+## A. Core Playback
+
+- FLAC.
+- MP3.
+- WAV.
+- Play/Pause.
+- Seek.
+- Next/Previous.
+- Shuffle/Repeat.
+- Queue.
+- Volume/Mute.
+- Fade.
+
+## B. Library
+
+- Import.
+- Search tiếng Việt không dấu.
+- Sort/Filter.
+- Dedupe.
+- Missing files.
+- Folder watcher.
+- Relink.
+
+## C. Personal Data
+
+- Playlist.
+- Favorites.
+- History.
+- Statistics.
+- Custom artwork.
+- Custom lyrics.
+- Metadata overrides.
+- Profile.
+- Avatar GIF.
+- Custom fonts.
+- Theme.
+- Home background.
+- Editorial Typography.
+
+## D. Now Playing UI
+
+- Standard Mode.
+- Focus Vinyl Mode.
+- Vinyl Rotation.
+- Tonearm.
+- Progress Ring.
+- Lyrics/Queue.
+- Dynamic Colors.
+- Dark/Light Mode.
+
+## E. Home UI
+
+- Playlist Gallery.
+- Animation hai chiều.
+- Editorial Typography.
+- Album Coverflow.
+- Mini Player.
+
+Không xem những lỗi cũ là còn tồn tại nếu chức năng hiện tại đã hoạt động đúng.
+
+Chỉ báo lỗi khi test mới phát hiện vấn đề thực tế.
+
+## F. Windows Features
+
+- Portable ZIP.
+- Setup EXE.
+- File associations.
+- Single instance.
+- Explorer Open With.
+- Restart persistence.
+- Offline operation.
+
+## G. Performance
+
+- CPU.
+- GPU.
+- RAM.
+- FPS.
+- Startup time.
+- Long-session stability.
+- Memory leak indicators.
+
+## H. Backup
+
+- Create Backup.
+- Restore.
+- Rollback on failure.
+- Relink.
+- Missing media.
+- Asset restore.
+- Restart after restore.
+
+---
+
+# 19. QUY TRÌNH THỰC HIỆN CUỐI
+
+Thực hiện theo ba pass.
+
+## PASS A - FUNCTIONAL COMPLETION
+
+1. Audit source.
+2. Backup/checkpoint.
+3. Folder Watching.
+4. ReplayGain.
+5. Sleep Timer.
+6. Windows Explorer Integration.
+7. Backup/Restore.
+8. Relink.
+9. Settings Integration.
+10. Functional Tests.
+
+Không dừng sau Pass A.
+
+## PASS B - PERFORMANCE & PACKAGING
+
+1. Profile CPU/RAM/GPU.
+2. Tối ưu điểm nghẽn.
+3. Kiểm thử UI và playback.
+4. Kiểm tra package.json/lockfile.
+5. Sửa native dependencies.
+6. Cấu hình electron-builder.
+7. Tạo Portable ZIP.
+8. Tạo Setup EXE.
+9. Tạo GitHub Actions workflow.
+10. Kiểm tra artifact outputs.
+
+Không dừng sau Pass B.
+
+## PASS C - QUALITY ASSURANCE
+
+1. TypeScript check.
+2. Build.
+3. Unit tests.
+4. Integration tests.
+5. Database migration tests.
+6. Backup/Restore tests.
+7. Audio regression.
+8. UI regression.
+9. Native module validation.
+10. EXE smoke test nếu môi trường hỗ trợ.
+11. Offline test nếu môi trường hỗ trợ.
+12. Performance comparison.
+13. Fix remaining issues.
+14. Final report.
+
+Không làm giả kết quả kiểm thử không thể chạy.
+
+---
+
+# 20. BÁO CÁO CUỐI CÙNG
+
+Sau khi triển khai, trả về báo cáo có cấu trúc:
+
+## A. Implementation Status
+
+Cho từng nhóm:
+
+- Folder Watching.
+- ReplayGain.
+- Sleep Timer.
+- Explorer Integration.
+- Backup/Restore.
+- Relink.
+- Settings.
+- Performance.
+- Windows Packaging.
+- GitHub Actions.
+
+Trạng thái:
+
+- DONE.
+- PARTIAL.
+- BLOCKED.
+
+## B. Changed Files
+
+Liệt kê chính xác những file đã thay đổi.
+
+Không liệt kê file không tồn tại.
+
+## C. Database Changes
+
+- Migrations.
+- Backup.
+- Versioning.
+- Rollback.
+- Data compatibility.
+
+## D. Build Fixes
+
+- npm.
+- Rolldown.
+- better-sqlite3.
+- Electron native modules.
+- ASAR.
+- Runtime paths.
+
+Báo cáo những lỗi thực sự tìm thấy, không mặc định tất cả lỗi cũ đều tái diễn.
+
+## E. GitHub Actions
+
+- Workflow path.
+- Trigger.
+- Node version.
+- Build scripts.
+- Artifacts.
+- Release instructions.
+
+## F. Package Output
+
+Cho biết chính xác:
+
+- Portable ZIP đã tạo được hay chưa.
+- Setup EXE đã tạo được hay chưa.
+- Đường dẫn output thực tế.
+- Checksum nếu có.
+- Có chạy packaged app được hay chưa.
+
+## G. Test Results
+
+Ghi:
+
+- PASS.
+- FAIL.
+- NOT RUN.
+- BLOCKED.
+
+Không báo PASS nếu chưa kiểm tra.
+
+## H. User Guide
+
+Hướng dẫn người dùng Windows theo hai cách:
+
+**Portable**
+
+Download -> Extract -> Run DoReMi.exe.
+
+**Installer**
+
+Download -> Run Setup -> Install -> Open DoReMi.
+
+Hướng dẫn không được yêu cầu Node.js hoặc npm trên máy người dùng cuối.
+
+## I. Remaining Issues
+
+Liệt kê những lỗi còn tồn tại, mức độ và cách tái hiện.
+
+---
+
+# 21. TIÊU CHÍ NGHIỆM THU CUỐI GIAI ĐOẠN
+
+DoReMi chỉ được xem là đạt trạng thái production-ready khi:
+
+1. Các chức năng cốt lõi vẫn hoạt động.
+2. Không mất dữ liệu người dùng.
+3. Folder watching hoạt động.
+4. ReplayGain hoạt động đúng trong các trường hợp được hỗ trợ.
+5. Sleep Timer hoạt động.
+6. Explorer Integration hoạt động.
+7. Backup/Restore hoạt động và bảo toàn dữ liệu.
+8. Relink không làm mất Stable Track ID.
+9. Settings lưu sau restart.
+10. Theme/Profile/Avatar/Font vẫn hoạt động.
+11. UI không bị regression.
+12. Performance được đo và đánh giá.
+13. TypeScript check thành công.
+14. Source build thành công.
+15. Native dependencies được đóng gói đúng.
+16. Portable ZIP được tạo thành công.
+17. Setup EXE được tạo thành công.
+18. Bản EXE khởi động và hoạt động thực tế trên Windows.
+19. SQLite hoạt động trong packaged build.
+20. Ứng dụng phát nhạc hoàn toàn offline.
+21. Người dùng cuối không cần Node.js hoặc npm.
+22. GitHub Actions có thể tái lập quá trình build từ source sạch.
+
+Nếu chưa có kết quả chạy EXE thực tế, không được tuyên bố toàn bộ tiêu chí nghiệm thu đã hoàn thành.
+
+---
+
+# FINAL DIRECTIVE
+
+Tôi muốn Giai đoạn 6 biến DoReMi từ một ứng dụng đang phát triển thành một ứng dụng Windows có thể sử dụng lâu dài.
+
+**Giữ nguyên tất cả UI và tính năng hiện đã hoạt động đúng.**
+
+**Hoàn thiện những chức năng backend còn thiếu.**
+
+**Tối ưu hiệu năng mà không hy sinh chất lượng âm thanh hoặc giao diện.**
+
+**Bảo vệ toàn bộ dữ liệu người dùng.**
+
+**Tạo hai bản phát hành: Portable ZIP và Setup EXE.**
+
+**Sử dụng GitHub Actions để build Windows trên môi trường sạch.**
+
+**Xử lý đúng các vấn đề npm, Rolldown, better-sqlite3 và Electron native modules.**
+
+**Không chỉ build thành công mà phải chuẩn bị và thực hiện kiểm thử packaged runtime trong phạm vi môi trường hỗ trợ.**
+
+Không tạo project mới.
+
+Không reset database.
+
+Không tự ý thay appId hoặc userData.
+
+Không dừng sau Audit.
+
+Không hỏi xác nhận từng phần.
+
+Không tạo mock features.
+
+Không che giấu test chưa chạy.
+
+**HÃY BẮT ĐẦU TRIỂN KHAI TOÀN BỘ GIAI ĐOẠN 6 TRÊN SOURCE DOREMI HIỆN TẠI, TỰ SỬA LỖI, KIỂM THỬ VÀ CHUẨN BỊ BẢN PHÁT HÀNH WINDOWS HOÀN CHỈNH.**
