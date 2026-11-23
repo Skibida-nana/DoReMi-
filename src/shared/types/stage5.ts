@@ -82,9 +82,9 @@ export interface PersonalizationPreferences {
   backgroundEffects: boolean;
   uiQualityPreset: UiQualityPreset;
   transition: PlaybackTransitionSettings;
-  replayGain: ReplayGainSettings;
-  autoScanFolders: boolean;
-  resumePlaybackOnStartup: boolean;
+  replayGain?: ReplayGainSettings;
+  autoScanFolders?: boolean;
+  resumePlaybackOnStartup?: boolean;
   editorialTypography: EditorialTypographySettings;
   editorialFonts: CustomEditorialFontRecord[];
 }

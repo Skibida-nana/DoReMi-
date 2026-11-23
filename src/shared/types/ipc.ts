@@ -96,27 +96,27 @@ export interface LosslessDesktopApi {
   getListeningStatistics(query: StatisticsQuery): Promise<StatisticsDashboardData>;
 
   // Stage 6: Watched Folders, Collections Sync, Backup/Restore, Relink, Explorer & Diagnostics
-  removeLibraryRoot(rootId: string): Promise<{ removed: boolean }>;
-  getFolderWatcherStatus(): Promise<import('./stage6').FolderWatcherStatus>;
-  onLibraryAutoUpdated(
+  removeLibraryRoot?(rootId: string): Promise<{ removed: boolean }>;
+  getFolderWatcherStatus?(): Promise<import('./stage6').FolderWatcherStatus>;
+  onLibraryAutoUpdated?(
     callback: (event: import('./stage6').LibraryAutoUpdateEvent) => void,
   ): () => void;
 
-  getPersistedCollections(): Promise<import('./stage6').PersistedUserCollections | null>;
-  savePersistedCollections(
+  getPersistedCollections?(): Promise<import('./stage6').PersistedUserCollections | null>;
+  savePersistedCollections?(
     collections: import('./stage6').PersistedUserCollections,
   ): Promise<{ saved: boolean }>;
 
-  createBackup(): Promise<import('./stage6').BackupCreateResult>;
-  restoreBackup(): Promise<import('./stage6').BackupRestoreResult>;
-  scanRelinkFolder(): Promise<import('./stage6').RelinkScanResult>;
-  applyRelink(
+  createBackup?(): Promise<import('./stage6').BackupCreateResult>;
+  restoreBackup?(): Promise<import('./stage6').BackupRestoreResult>;
+  scanRelinkFolder?(): Promise<import('./stage6').RelinkScanResult>;
+  applyRelink?(
     selections: readonly import('./stage6').RelinkApplySelection[],
   ): Promise<import('./stage6').RelinkApplyResult>;
 
-  consumePendingExternalFiles(): Promise<import('./stage6').ExternalFilesOpenEvent | null>;
-  onOpenExternalFiles(
+  consumePendingExternalFiles?(): Promise<import('./stage6').ExternalFilesOpenEvent | null>;
+  onOpenExternalFiles?(
     callback: (event: import('./stage6').ExternalFilesOpenEvent) => void,
   ): () => void;
-  getDiagnosticLogs(): Promise<import('./stage6').DiagnosticLogEntry[]>;
+  getDiagnosticLogs?(): Promise<import('./stage6').DiagnosticLogEntry[]>;
 }

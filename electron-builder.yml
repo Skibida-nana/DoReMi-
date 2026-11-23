@@ -28,13 +28,14 @@ win:
     - target: nsis
       arch:
         - x64
-    - target: portable
+    - target: zip
       arch:
         - x64
-  artifactName: "${productName}-${version}-${arch}-${target}.${ext}"
+  artifactName: "${productName}-${version}-${arch}-portable.${ext}"
   requestedExecutionLevel: asInvoker
 
 nsis:
+  artifactName: "${productName}-${version}-${arch}-setup.${ext}"
   oneClick: false
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true

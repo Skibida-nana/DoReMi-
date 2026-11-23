@@ -26,11 +26,12 @@ test('SQLite opens with foreign_keys ON, WAL mode, and applies idempotent v1+v2 
 
       const applied1 = runMigrations(conn.db);
       const applied2 = runMigrations(conn.db);
-      assert.equal(applied1.length, 3);
-      assert.equal(applied2.length, 3);
+      assert.equal(applied1.length, 4);
+      assert.equal(applied2.length, 4);
       assert.equal(applied1[0].name, '001_initial_library_schema');
       assert.equal(applied1[1].name, '002_stage3_artwork_lyrics_metadata_overrides');
       assert.equal(applied1[2].name, '003_stage5_profile_preferences_stats');
+      assert.equal(applied1[3].name, '004_stage6_replaygain_watcher_backup');
     } finally {
       conn.close();
     }

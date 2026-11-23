@@ -1,0 +1,255 @@
+name: Build Windows
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-windows-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-windows-x64:
+    name: Windows x64 (Setup EXE + Portable ZIP)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+
+    env:
+      # Strictly offline unsigned build: skip code-signing auto-discovery without disabling resedit metadata
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      ELECTRON_BUILDER_ALLOW_UNRESOLVED_DEPENDENCIES: "false"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies (with optional native bindings)
+        run: |
+          Write-Host "Node version: $(node -v)"
+          Write-Host "npm version: $(npm -v)"
+
+          # Always include optional dependencies so Windows native bindings (Rolldown, Tailwind Oxide, LightningCSS, esbuild) install cleanly.
+          # Prefer npm ci for deterministic installs; if package-lock.json ever drifts from package.json, fall back to npm install cleanly.
+          $ciSuccess = $false
+          if (Test-Path "package-lock.json") {
+            Write-Host "Running npm ci --include=optional..."
+            npm ci --include=optional --no-audit --no-fund
+            if ($LASTEXITCODE -eq 0) {
+              $ciSuccess = $true
+            } else {
+              Write-Warning "npm ci exited with code $LASTEXITCODE; falling back to clean npm install --include=optional to synchronize dependencies on Windows runner."
+              if (Test-Path "node_modules") {
+                Remove-Item -Recurse -Force "node_modules"
+              }
+            }
+          }
+
+          if (-not $ciSuccess) {
+            npm install --include=optional --no-audit --no-fund
+            if ($LASTEXITCODE -ne 0) {
+              throw "Dependency installation failed with exit code $LASTEXITCODE."
+            }
+          }
+
+      - name: Verify Windows native bindings & production dependencies
+        run: |
+          $requiredPaths = @(
+            "node_modules/@fontsource/poppins/package.json",
+            "node_modules/better-sqlite3/package.json",
+            "node_modules/music-metadata/package.json",
+            "node_modules/@rolldown/binding-win32-x64-msvc/package.json",
+            "node_modules/@tailwindcss/oxide-win32-x64-msvc/package.json",
+            "node_modules/lightningcss-win32-x64-msvc/package.json",
+            "node_modules/electron/dist/electron.exe"
+          )
+
+          $missing = @()
+          foreach ($p in $requiredPaths) {
+            if (-not (Test-Path $p)) {
+              $missing += $p
+            }
+          }
+
+          if ($missing.Count -gt 0) {
+            throw "Missing required Windows packages/native bindings:`n - $($missing -join "`n - ")"
+          }
+
+          Write-Host "All required Windows native bindings and production dependencies verified."
+
+      - name: TypeScript type check
+        run: npm run lint
+
+      - name: Run unit & SQLite integration tests
+        run: npm test
+
+      - name: Verify or rebuild better-sqlite3 for Electron ABI
+        run: |
+          $electronExe = "node_modules\electron\dist\electron.exe"
+          $probeScript = "const Database = require('better-sqlite3'); const db = new Database(':memory:'); const row = db.prepare('SELECT 1 + 1 AS ok').get(); db.close(); if (row.ok !== 2) process.exit(1); console.log('SQLITE_ELECTRON_ABI_OK');"
+
+          $abiOk = $false
+          $env:ELECTRON_RUN_AS_NODE = "1"
+          try {
+            $output = & $electronExe -e $probeScript 2>&1
+            Write-Host ($output -join "`n")
+            if ($LASTEXITCODE -eq 0 -and ($output -join "`n") -match 'SQLITE_ELECTRON_ABI_OK') {
+              $abiOk = $true
+            }
+          } finally {
+            Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
+          }
+
+          if ($abiOk) {
+            Write-Host "better-sqlite3 native binding is already ABI-compatible with packaged Electron runtime."
+          } else {
+            Write-Host "Rebuilding better-sqlite3 for target Electron ABI using npm run rebuild:electron..."
+            npm run rebuild:electron
+            if ($LASTEXITCODE -ne 0) {
+              throw "npm run rebuild:electron failed with exit code $LASTEXITCODE."
+            }
+
+            $env:ELECTRON_RUN_AS_NODE = "1"
+            try {
+              $recheck = & $electronExe -e $probeScript 2>&1
+              Write-Host ($recheck -join "`n")
+              if ($LASTEXITCODE -ne 0 -or ($recheck -join "`n") -notmatch 'SQLITE_ELECTRON_ABI_OK') {
+                throw "better-sqlite3 still failed to load in Electron after rebuild."
+              }
+            } finally {
+              Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
+            }
+          }
+
+      - name: Build Electron production bundles (main, preload, renderer)
+        run: |
+          npm run build
+          if ($LASTEXITCODE -ne 0) {
+            throw "electron-vite build failed with exit code $LASTEXITCODE."
+          }
+
+          foreach ($bundle in @("out/main/index.js", "out/preload/index.cjs", "out/renderer/index.html")) {
+            if (-not (Test-Path $bundle)) {
+              throw "Expected production bundle missing: $bundle"
+            }
+          }
+
+          $indexHtml = Get-Content "out/renderer/index.html" -Raw
+          if ($indexHtml -notmatch 'src="\./assets/' -or $indexHtml -notmatch 'href="\./assets/') {
+            throw "out/renderer/index.html does not reference relative ./assets/ paths required for packaged file:// loading."
+          }
+
+          Write-Host "Main, Preload, and Renderer bundles verified."
+
+      - name: Package Windows x64 Setup EXE & Portable ZIP (electron-builder)
+        run: |
+          if (Test-Path "release") {
+            Remove-Item -Recurse -Force "release"
+          }
+          npx electron-builder --win nsis zip --x64 --publish never
+          if ($LASTEXITCODE -ne 0) {
+            throw "electron-builder failed with exit code $LASTEXITCODE."
+          }
+
+      - name: Verify Setup EXE, Portable ZIP, ASAR unpack & packaged SQLite ABI
+        run: |
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+          $unpackedDir = "release/win-unpacked"
+          $unpackedExe = Join-Path $unpackedDir "DoReMi.exe"
+          $appAsar = Join-Path $unpackedDir "resources/app.asar"
+          $sqliteUnpackedDir = Join-Path $unpackedDir "resources/app.asar.unpacked/node_modules/better-sqlite3"
+
+          foreach ($p in @($unpackedExe, $appAsar, $sqliteUnpackedDir)) {
+            if (-not (Test-Path $p)) {
+              throw "Missing required packaged file/directory: $p"
+            }
+          }
+
+          $nativeNodeFiles = Get-ChildItem -Path $sqliteUnpackedDir -Recurse -Filter "*.node"
+          if ($nativeNodeFiles.Count -eq 0) {
+            throw "No unpacked better-sqlite3 .node native binary found under $sqliteUnpackedDir."
+          }
+          Write-Host "Unpacked native SQLite binaries: $($nativeNodeFiles.FullName -join ', ')"
+
+          # Smoke-test better-sqlite3 directly inside the packaged DoReMi.exe runtime
+          $env:ELECTRON_RUN_AS_NODE = "1"
+          try {
+            $packagedSqlitePath = (Resolve-Path $sqliteUnpackedDir).Path
+            $smokeOut = & $unpackedExe -e "const Database = require(process.argv[1]); const db = new Database(':memory:'); const v = db.prepare('SELECT sqlite_version() AS ver').get().ver; db.close(); console.log('PACKAGED_SQLITE_OK', v);" $packagedSqlitePath 2>&1
+            Write-Host ($smokeOut -join "`n")
+            if ($LASTEXITCODE -ne 0 -or ($smokeOut -join "`n") -notmatch 'PACKAGED_SQLITE_OK') {
+              throw "Packaged DoReMi.exe failed to load unpacked better-sqlite3 native module."
+            }
+          } finally {
+            Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
+          }
+
+          # Verify Setup EXE exists and is non-trivial
+          $setupExes = Get-ChildItem -Path "release" -File -Filter "DoReMi-*-x64-setup.exe"
+          if ($setupExes.Count -ne 1 -or $setupExes[0].Length -lt 10MB) {
+            throw "Expected single Setup EXE (>= 10 MB) in release/, found: $($setupExes.Name -join ', ')"
+          }
+
+          # Verify Portable ZIP exists, is non-trivial, and contains full runtime (EXE + DLLs + resources/app.asar + unpacked better-sqlite3)
+          $portableZips = Get-ChildItem -Path "release" -File -Filter "DoReMi-*-x64-portable.zip"
+          if ($portableZips.Count -ne 1 -or $portableZips[0].Length -lt 10MB) {
+            throw "Expected single Portable ZIP (>= 10 MB) in release/, found: $($portableZips.Name -join ', ')"
+          }
+
+          $zip = [System.IO.Compression.ZipFile]::OpenRead($portableZips[0].FullName)
+          try {
+            $entries = $zip.Entries | ForEach-Object { $_.FullName -replace '\\', '/' }
+            $hasExe = $entries -contains 'DoReMi.exe'
+            $hasAsar = $entries -contains 'resources/app.asar'
+            $hasSqliteNode = ($entries | Where-Object { $_ -like 'resources/app.asar.unpacked/node_modules/better-sqlite3/*.node' -or $_ -like 'resources/app.asar.unpacked/node_modules/better-sqlite3/*/*.node' -or $_ -like 'resources/app.asar.unpacked/node_modules/better-sqlite3/*/*/*.node' }).Count -gt 0
+            $dllCount = ($entries | Where-Object { $_ -like '*.dll' }).Count
+
+            if (-not $hasExe -or -not $hasAsar -or -not $hasSqliteNode -or $dllCount -lt 3) {
+              throw "Portable ZIP integrity check failed (hasExe=$hasExe, hasAsar=$hasAsar, hasSqliteNode=$hasSqliteNode, dllCount=$dllCount)."
+            }
+
+            Write-Host "Portable ZIP verified: $($entries.Count) entries, $dllCount DLLs, DoReMi.exe + app.asar + unpacked better-sqlite3 confirmed."
+          } finally {
+            $zip.Dispose()
+          }
+
+          # Generate SHA256 checksums for both artifacts
+          $artifacts = @($setupExes[0], $portableZips[0])
+          $checksumLines = foreach ($file in $artifacts) {
+            $hash = (Get-FileHash -Path $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            $sizeMb = [Math]::Round($file.Length / 1MB, 2)
+            Write-Host "Artifact ready: $($file.Name) ($sizeMb MB) SHA256=$hash"
+            "$hash  $($file.Name)"
+          }
+          $checksumLines | Set-Content -Path "release/SHA256SUMS.txt" -Encoding utf8
+
+      - name: Upload DoReMi Windows Portable ZIP Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DoReMi-Windows-x64-Portable-ZIP
+          path: |
+            release/DoReMi-*-x64-portable.zip
+            release/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload DoReMi Windows Setup EXE Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DoReMi-Windows-x64-Setup-EXE
+          path: |
+            release/DoReMi-*-x64-setup.exe
+            release/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
