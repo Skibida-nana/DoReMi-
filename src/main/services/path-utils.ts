@@ -85,3 +85,51 @@ export function extractFallbackTitle(filePath: string): string {
   const base = useWin ? path.win32.basename(filePath, ext) : path.posix.basename(filePath, ext);
   return base.normalize('NFC').trim() || 'Unknown Title';
 }
+
+/**
+ * Checks whether a normalized file/directory path resides inside a normalized watched folder root,
+ * without prefix false positives (e.g. "/music2/a.flac" is NOT inside "/music").
+ * Supports both Windows drive/UNC normalized paths and POSIX normalized paths.
+ */
+export function isNormalizedPathWithinRoot(
+  candidateNormalizedPath: string,
+  rootNormalizedPath: string,
+): boolean {
+  if (!candidateNormalizedPath || !rootNormalizedPath) {
+    return false;
+  }
+  if (candidateNormalizedPath === rootNormalizedPath) {
+    return true;
+  }
+
+  const sep = isWindowsStylePath(rootNormalizedPath) ? '\\' : '/';
+  const rootWithSep = rootNormalizedPath.endsWith(sep)
+    ? rootNormalizedPath
+    : `${rootNormalizedPath}${sep}`;
+
+  return candidateNormalizedPath.startsWith(rootWithSep);
+}
+
+/**
+ * Finds the most specific (deepest) watched root containing a normalized track path,
+ * or null if the track does not belong to any watched root.
+ */
+export function findMostSpecificWatchedRootId(
+  trackNormalizedPath: string,
+  roots: ReadonlyArray<{ id: string; normalized_path: string }>,
+): string | null {
+  let bestId: string | null = null;
+  let bestLen = -1;
+
+  for (const root of roots) {
+    if (
+      isNormalizedPathWithinRoot(trackNormalizedPath, root.normalized_path) &&
+      root.normalized_path.length > bestLen
+    ) {
+      bestId = root.id;
+      bestLen = root.normalized_path.length;
+    }
+  }
+
+  return bestId;
+}

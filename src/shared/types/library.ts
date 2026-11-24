@@ -63,3 +63,62 @@ export interface AppRuntimeInfo {
   platform: string;
   databasePath: string;
 }
+
+export interface LibraryExclusionRecord {
+  id: string;
+  normalized_path: string;
+  original_path: string;
+  root_id: string | null;
+  file_size_bytes: number | null;
+  modified_at_ms: number | null;
+  title: string | null;
+  artist: string | null;
+  album: string | null;
+  reason: string;
+  excluded_at: string;
+}
+
+export interface WatchedFolderSummary extends LibraryRootRecord {
+  exists: boolean;
+  trackCount: number;
+}
+
+export interface RemoveTracksResult {
+  removedTrackIds: string[];
+  excludedCount: number;
+  notFoundIds: string[];
+}
+
+export type RemoveWatchedFolderMode = 'stop-watching' | 'remove-tracks';
+
+export interface RemoveWatchedFolderResult {
+  removed: boolean;
+  rootId: string;
+  mode: RemoveWatchedFolderMode;
+  removedTrackIds: string[];
+  remainingRootCount: number;
+}
+
+export interface ClearLibraryResult {
+  removedTrackCount: number;
+  removedRootCount: number;
+  clearedExclusionCount: number;
+}
+
+export interface TrashTrackFileFailure {
+  trackId: string;
+  title: string;
+  path: string;
+  error: string;
+}
+
+export interface TrashTrackFilesResult {
+  trashedTrackIds: string[];
+  failed: TrashTrackFileFailure[];
+}
+
+export interface ReimportExcludedResult {
+  reimportedCount: number;
+  clearedExclusionCount: number;
+  summary: ImportSummary;
+}

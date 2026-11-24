@@ -32,6 +32,7 @@ import type {
   ResolvedTrackLyrics,
   TrackMetadataOverrideInput,
 } from '../../../shared/types/track';
+import { classifyTrackAudioCodec } from '../../../shared/utils/audio-codec';
 import {
   decodeLyricsBuffer,
   getSupportedLyricsEncodings,
@@ -44,6 +45,7 @@ import {
 import { DEFAULT_DOREMI_ARTWORK_URL } from '../assets/default-artwork';
 import { NowPlayingLyricsPanel } from '../components/NowPlayingLyricsPanel';
 import { PlaybackTransitionControl } from '../components/PlaybackTransitionControl';
+import { QuickEqPopover } from '../components/QuickEqPopover';
 import {
   TrackMetadataModal,
   type TrackMetadataEditTarget,
@@ -677,13 +679,27 @@ export function NowPlayingPage() {
   // Real technical metadata fields for Info Tab (never fabricated)
   const techSpecItems = useMemo(() => {
     const items: Array<{ label: string; value: string }> = [];
-    const container = localTrack
-      ? (localTrack.container ?? localTrack.codec ?? '').toUpperCase()
-      : sampleTrack.container;
-    if (container) {
-      items.push({ label: 'Định dạng', value: container });
+    const classified = localTrack ? classifyTrackAudioCodec(localTrack) : null;
+    if (classified) {
+      const formatLabel = classified.isM4aContainer
+        ? classified.qualityTier === 'lossless'
+          ? `${classified.displayCodec} (Lossless · M4A)`
+          : classified.qualityTier === 'lossy'
+            ? `${classified.displayCodec} (Lossy · M4A)`
+            : `${classified.displayCodec} (M4A)`
+        : classified.displayCodec;
+      if (formatLabel) {
+        items.push({ label: 'Định dạng', value: formatLabel });
+      }
+    } else if (sampleTrack.container) {
+      items.push({ label: 'Định dạng', value: sampleTrack.container });
     }
-    const bitDepth = localTrack ? localTrack.bit_depth : sampleTrack.bitDepth;
+    const bitDepth =
+      classified?.qualityTier === 'lossy'
+        ? null
+        : localTrack
+          ? localTrack.bit_depth
+          : sampleTrack.bitDepth;
     if (bitDepth) {
       items.push({ label: 'Bit depth', value: `${bitDepth}-bit` });
     }
@@ -1611,8 +1627,13 @@ export function NowPlayingPage() {
             </div>
           </div>
 
-          {/* Right Controls: Fade Quick Control + Clean Volume + Focus Mode Button */}
+          {/* Right Controls: Quick EQ + Fade Quick Control + Clean Volume + Focus Mode Button */}
           <div className="flex shrink-0 items-center justify-end gap-2.5">
+            <QuickEqPopover
+              accentHex={palette.dominant}
+              accentGlowRgb={palette.glowRgb}
+            />
+
             <PlaybackTransitionControl
               accentHex={palette.dominant}
               accentGlowRgb={palette.glowRgb}

@@ -1,9 +1,14 @@
 import { useSyncExternalStore } from 'react';
+import type {
+  AudioDspRuntimeSnapshot,
+  AudioLabSettings,
+} from '../../../shared/types/audio-dsp';
 import type { PlaybackState } from '../../../shared/types/player';
 import type {
   ListeningSessionInput,
   PlaybackTransitionSettings,
 } from '../../../shared/types/stage5';
+import type { ReplayGainSettings } from '../../../shared/types/stage6';
 import type { TrackRecord } from '../../../shared/types/track';
 import { getAudioEngine } from '../player/audio-engine';
 
@@ -59,11 +64,26 @@ export const playerActions = {
   setTransitionConfig: (partial: Partial<PlaybackTransitionSettings>) =>
     engine.setTransitionConfig(partial),
   getTransitionConfig: () => engine.getTransitionConfig(),
+  setAudioLabSettings: (settings: AudioLabSettings) => engine.setAudioLabSettings(settings),
+  getAudioLabSettings: () => engine.getAudioLabSettings(),
+  setReplayGainSettings: (partial: Partial<ReplayGainSettings>) =>
+    engine.setReplayGainSettings(partial),
+  getReplayGainSettings: () => engine.getReplayGainSettings(),
+  ensureDspReady: () => engine.ensureDspReady(),
+  readSpectrumData: (target: Uint8Array) => engine.readSpectrumData(target),
+  getAnalyserBinCount: () => engine.getAnalyserBinCount(),
 };
 
 export function usePlaybackState(): PlaybackState {
   return useSyncExternalStore(
     (onStoreChange) => engine.subscribe(() => onStoreChange()),
     () => engine.getPlaybackState(),
+  );
+}
+
+export function useAudioDspState(): AudioDspRuntimeSnapshot {
+  return useSyncExternalStore(
+    (onStoreChange) => engine.subscribeDsp(() => onStoreChange()),
+    () => engine.getDspRuntimeSnapshot(),
   );
 }

@@ -374,4 +374,50 @@ export class TrackRepository {
     });
     return result.changes > 0;
   }
+
+  getDatabase(): Database.Database {
+    return this.db;
+  }
+
+  findByIds(ids: readonly string[]): TrackRecord[] {
+    if (ids.length === 0) {
+      return [];
+    }
+    const result: TrackRecord[] = [];
+    const seen = new Set<string>();
+    for (const id of ids) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const found = this.findById(id);
+      if (found) {
+        result.push(found);
+      }
+    }
+    return result;
+  }
+
+  deleteById(id: string): boolean {
+    const stmt = this.db.prepare('DELETE FROM tracks WHERE id = ?');
+    return stmt.run(id).changes > 0;
+  }
+
+  deleteByIds(ids: readonly string[]): number {
+    if (ids.length === 0) {
+      return 0;
+    }
+    const stmt = this.db.prepare('DELETE FROM tracks WHERE id = ?');
+    const tx = this.db.transaction((targetIds: readonly string[]) => {
+      let deleted = 0;
+      for (const id of targetIds) {
+        deleted += stmt.run(id).changes;
+      }
+      return deleted;
+    });
+    return tx(ids);
+  }
+
+  deleteAll(): number {
+    const stmt = this.db.prepare('DELETE FROM tracks');
+    return stmt.run().changes;
+  }
 }

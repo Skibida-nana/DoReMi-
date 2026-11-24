@@ -7,11 +7,15 @@ import {
   FolderOpen,
   Info,
   PlayCircle,
+  SlidersHorizontal,
   Sparkles,
 } from 'lucide-react';
 import type { FadeDurationSec } from '../../../shared/types/stage5';
+import type { ReplayGainMode } from '../../../shared/types/stage6';
+import { getActiveSlotConfig, getAllPresets } from '../../../shared/utils/audio-dsp';
 import { SettingToggleRow } from '../components/ToggleSwitch';
 import { useLibraryState } from '../stores/library-store';
+import { useAudioDspState } from '../stores/player-store';
 import { uiStore, useUiState } from '../stores/ui-store';
 
 type SettingsSection = 'playback' | 'library' | 'backup' | 'about';
@@ -26,10 +30,18 @@ const FADE_OPTIONS: FadeDurationSec[] = [0.5, 1, 2, 3];
 export function SettingsPage() {
   const ui = useUiState();
   const library = useLibraryState();
+  const dsp = useAudioDspState();
   const userAccent = uiStore.getUserAccentPalette();
   const [section, setSection] = useState<SettingsSection>('playback');
 
   const { enabled: fadeEnabled, durationSec: fadeDurationSec } = ui.preferences.transition;
+  const audioLab = uiStore.getAudioLabSettings();
+  const replayGain = uiStore.getReplayGainSettings();
+  const activeEqSlot = getActiveSlotConfig(audioLab);
+  const activeEqPreset =
+    getAllPresets(audioLab).find((p) => p.id === activeEqSlot.activePresetId) ?? null;
+  const isElectronDesktop =
+    typeof window !== 'undefined' && Boolean(window.losslessApi);
 
   const navItems: Array<{ id: SettingsSection; label: string; icon: typeof PlayCircle }> = [
     { id: 'playback', label: 'Phát nhạc', icon: PlayCircle },
@@ -189,6 +201,149 @@ export function SettingsPage() {
                         </button>
                       );
                     })}
+                  </div>
+                </div>
+              </div>
+
+              {/* Phase 7: Audio Lab / Equalizer & ReplayGain Section (Two-Way Synced) */}
+              <div
+                data-testid="settings-audio-lab-section"
+                className="space-y-4 rounded-2xl border border-[var(--border-glass)] bg-[var(--surface-glass-light)] p-5"
+              >
+                <SettingToggleRow
+                  variant="compact"
+                  label="Audio Lab / Equalizer DSP"
+                  description="Chuỗi lọc Web Audio Graphic 10-band & Parametric 8-band chạy hoàn toàn offline mà không thay đổi file nhạc gốc."
+                  checked={audioLab.enabled}
+                  onChange={(next) => uiStore.setAudioLabEnabled(next)}
+                  accentHex={userAccent.activeHex}
+                  testId="settings-eq-toggle"
+                  leadingIcon={
+                    <div
+                      className="flex h-9 w-9 items-center justify-center rounded-xl"
+                      style={{
+                        backgroundColor: `rgba(${userAccent.glowRgb}, 0.16)`,
+                        color: userAccent.activeHex,
+                      }}
+                    >
+                      <SlidersHorizontal className="h-4.5 w-4.5" />
+                    </div>
+                  }
+                />
+
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border-subtle)] pt-3.5 text-[12.5px]">
+                  <div className="space-y-0.5">
+                    <p
+                      data-testid="settings-eq-preset-summary"
+                      className="font-medium text-[var(--text-primary)]"
+                    >
+                      Preset hiện tại:{' '}
+                      <span style={{ color: userAccent.activeHex }}>
+                        {activeEqPreset ? activeEqPreset.name : 'Tùy chỉnh'}
+                      </span>{' '}
+                      · Slot {audioLab.activeSlot} ·{' '}
+                      {activeEqSlot.mode === 'parametric' ? 'Parametric 8-Band' : 'Graphic 10-Band'}
+                    </p>
+                    <p className="text-[11.5px] text-[var(--text-muted)]">
+                      {!isElectronDesktop
+                        ? 'Preview Mode · Desktop Playback Unavailable (lưu cấu hình cục bộ)'
+                        : dsp.mode === 'dsp' && dsp.contextState === 'running'
+                          ? `Web Audio DSP Active · ${Number((dsp.sampleRate / 1000).toFixed(1))} kHz`
+                          : dsp.mode === 'error'
+                            ? `DSP Error Fallback: ${dsp.lastError || 'Phát trực tiếp'}`
+                            : 'DSP sẵn sàng khi phát file nhạc cục bộ'}
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    data-testid="settings-open-audio-lab-btn"
+                    onClick={() => uiStore.navigate('audio-lab')}
+                    style={{
+                      backgroundColor: `rgba(${userAccent.glowRgb}, 0.14)`,
+                      borderColor: `rgba(${userAccent.glowRgb}, 0.35)`,
+                    }}
+                    className="inline-flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl border px-3.5 text-[12.5px] font-semibold text-[var(--text-primary)] transition hover:brightness-110"
+                  >
+                    <span>Mở Audio Lab</span>
+                    <ArrowUpRight className="h-3.5 w-3.5" style={{ color: userAccent.activeHex }} />
+                  </button>
+                </div>
+
+                <div className="border-t border-[var(--border-subtle)] pt-3.5">
+                  <SettingToggleRow
+                    variant="compact"
+                    label="Auto Headroom (Bù khoảng dự trữ EQ)"
+                    description="Tự động hạ nhẹ Preamp tương ứng mức tăng dương lớn nhất của EQ nhằm giảm nguy cơ clipping."
+                    checked={activeEqSlot.autoHeadroom}
+                    onChange={(next) => uiStore.setEqAutoHeadroom(next)}
+                    accentHex={userAccent.activeHex}
+                    testId="settings-auto-headroom-toggle"
+                  />
+                </div>
+
+                <div className="border-t border-[var(--border-subtle)] pt-3.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-[12.5px] font-medium text-[var(--text-secondary)]">
+                      ReplayGain (Cân bằng âm lượng từ tag file gốc)
+                    </span>
+                    <span className="font-mono-tabular text-[11.5px] text-[var(--text-muted)]">
+                      {replayGain.mode === 'off'
+                        ? 'Đang tắt'
+                        : replayGain.mode === 'album'
+                          ? 'Chế độ Album'
+                          : 'Chế độ Track'}
+                    </span>
+                  </div>
+                  <div className="mt-2.5 grid grid-cols-3 gap-2">
+                    {(
+                      [
+                        { id: 'off', label: 'Tắt' },
+                        { id: 'track', label: 'Track' },
+                        { id: 'album', label: 'Album' },
+                      ] as Array<{ id: ReplayGainMode; label: string }>
+                    ).map((opt) => {
+                      const selected = replayGain.mode === opt.id;
+                      return (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          data-testid={`settings-rg-${opt.id}`}
+                          onClick={() => uiStore.updateReplayGainSettings({ mode: opt.id })}
+                          style={
+                            selected
+                              ? {
+                                  backgroundColor: `rgba(${userAccent.glowRgb}, 0.2)`,
+                                  borderColor: userAccent.activeHex,
+                                  color: userAccent.activeHex,
+                                }
+                              : undefined
+                          }
+                          className={`flex items-center justify-center gap-1 rounded-xl border py-2 text-[12.5px] font-semibold transition ${
+                            selected
+                              ? ''
+                              : 'border-[var(--border-subtle)] bg-[var(--bg-elevated)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]'
+                          }`}
+                        >
+                          {selected && <Check className="h-3.5 w-3.5" />}
+                          {opt.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="mt-3">
+                    <SettingToggleRow
+                      variant="compact"
+                      label="Chống clipping ReplayGain"
+                      description="Giới hạn mức khuếch đại dương theo thông số peak của bài hát để tránh vỡ tiếng."
+                      checked={replayGain.preventClipping}
+                      onChange={(next) =>
+                        uiStore.updateReplayGainSettings({ preventClipping: next })
+                      }
+                      accentHex={userAccent.activeHex}
+                      testId="settings-rg-clipping-toggle"
+                    />
                   </div>
                 </div>
               </div>

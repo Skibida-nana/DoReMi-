@@ -198,6 +198,32 @@ export const MIGRATIONS: readonly MigrationDefinition[] = [
       }
     },
   },
+  {
+    version: 5,
+    name: '005_phase8_library_exclusions',
+    up(db: Database.Database): void {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS library_exclusions (
+          id TEXT PRIMARY KEY,
+          normalized_path TEXT NOT NULL UNIQUE,
+          original_path TEXT NOT NULL,
+          root_id TEXT,
+          file_size_bytes INTEGER,
+          modified_at_ms INTEGER,
+          title TEXT,
+          artist TEXT,
+          album TEXT,
+          reason TEXT NOT NULL DEFAULT 'user-removed',
+          excluded_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_library_exclusions_path
+          ON library_exclusions(normalized_path);
+        CREATE INDEX IF NOT EXISTS idx_library_exclusions_root
+          ON library_exclusions(root_id);
+      `);
+    },
+  },
 ];
 
 export interface AppliedMigrationRecord {

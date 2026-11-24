@@ -1,3 +1,4 @@
+import type { AudioLabSettings } from './audio-dsp';
 import type { ReplayGainSettings } from './stage6';
 
 export type ThemeMode = 'dark' | 'light';
@@ -83,6 +84,7 @@ export interface PersonalizationPreferences {
   uiQualityPreset: UiQualityPreset;
   transition: PlaybackTransitionSettings;
   replayGain?: ReplayGainSettings;
+  audioLab?: AudioLabSettings;
   autoScanFolders?: boolean;
   resumePlaybackOnStartup?: boolean;
   editorialTypography: EditorialTypographySettings;

@@ -7,6 +7,7 @@ import { LyricsRepository } from './database/lyrics-repository';
 import { MetadataOverrideRepository } from './database/metadata-override-repository';
 import { TrackRepository } from './database/track-repository';
 import { broadcastTrackStatusChanged, registerIpcHandlers } from './ipc/register-ipc';
+import { disposeSharedAlacStreamManager } from './services/alac-decoder';
 import { ArtworkService } from './services/artwork-service';
 import {
   registerAudioProtocolHandler,
@@ -163,6 +164,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  disposeSharedAlacStreamManager();
   dbConnection?.close();
   dbConnection = null;
 });

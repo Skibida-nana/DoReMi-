@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import { parseFile } from 'music-metadata';
 import type { ParsedTrackMetadata } from '../../shared/types/track';
 import { extractReplayGainFromMetadata } from '../../shared/utils/replaygain';
+import { detectMp4AudioCodec } from './alac-decoder';
 import { extractFallbackTitle, extractFileExtension } from './path-utils';
 
 export class MetadataReadError extends Error {
@@ -153,13 +154,39 @@ export async function readTrackMetadata(filePath: string): Promise<ParsedTrackMe
     const year = toNullableYear(metadata.common.year, metadata.common.date);
     const embeddedLyrics = normalizeEmbeddedLyrics(metadata.common.lyrics);
 
-    const codec = cleanOptionalText(metadata.format.codec);
-    const container = cleanOptionalText(metadata.format.container) ?? fallbackContainer;
+    let codec = cleanOptionalText(metadata.format.codec);
+    let container = cleanOptionalText(metadata.format.container) ?? fallbackContainer;
     const durationMs = toNullableDurationMs(metadata.format.duration);
-    const sampleRateHz = toNullablePositiveInt(metadata.format.sampleRate);
-    const bitDepth = toNullablePositiveInt(metadata.format.bitsPerSample);
+    let sampleRateHz = toNullablePositiveInt(metadata.format.sampleRate);
+    let bitDepth = toNullablePositiveInt(metadata.format.bitsPerSample);
     const bitrateBps = toNullablePositiveInt(metadata.format.bitrate);
     const rg = extractReplayGainFromMetadata(metadata);
+
+    // For M4A/MP4 containers, inspect real ISO-BMFF `stsd` boxes so ALAC (Lossless, including
+    // >65.5kHz high-res sample rates that overflow MP4 16.16 stsd fields) and AAC (Lossy, no
+    // PCM bit depth) are always classified accurately without guessing from file extension.
+    if (ext === '.m4a' || ext === '.mp4') {
+      const mp4Probe = await detectMp4AudioCodec(filePath);
+      if (mp4Probe.codec === 'alac') {
+        codec = 'ALAC';
+        container = 'M4A';
+        if (!sampleRateHz && mp4Probe.sampleRateHz) {
+          sampleRateHz = mp4Probe.sampleRateHz;
+        }
+        if (!bitDepth && mp4Probe.bitDepth) {
+          bitDepth = mp4Probe.bitDepth;
+        }
+      } else if (mp4Probe.codec === 'aac') {
+        codec = 'AAC';
+        container = 'M4A';
+        // Lossy AAC does not have a PCM bit depth (music-metadata reports container default 16)
+        bitDepth = null;
+      } else if (codec && /AAC|MP4A/i.test(codec)) {
+        codec = 'AAC';
+        container = 'M4A';
+        bitDepth = null;
+      }
+    }
 
     return {
       title,

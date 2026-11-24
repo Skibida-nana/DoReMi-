@@ -1,4 +1,5 @@
 import type { TrackRecord } from '../../../shared/types/track';
+import { classifyTrackAudioCodec } from '../../../shared/utils/audio-codec';
 
 export function formatDurationSeconds(seconds: number | null | undefined): string {
   if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 0) {
@@ -25,23 +26,35 @@ export function formatDurationMs(ms: number | null | undefined): string {
 
 /**
  * Formats audio format technical info honestly using only non-null fields from SQLite.
- * Never fabricates bit depth, sample rate, or bitrate.
+ * Explicitly distinguishes ALAC (Lossless) vs AAC (Lossy) for M4A files and never fabricates specs.
  */
 export function formatTrackAudioSpecs(track: TrackRecord): string {
   const parts: string[] = [];
+  const classified = classifyTrackAudioCodec(track);
 
-  const formatLabel = track.container ?? track.codec;
-  if (formatLabel) {
-    parts.push(formatLabel.toUpperCase());
+  if (classified.isM4aContainer) {
+    if (classified.family === 'alac') {
+      parts.push('ALAC (Lossless)');
+    } else if (classified.family === 'aac') {
+      parts.push('AAC (Lossy)');
+    } else {
+      parts.push(classified.displayCodec.toUpperCase());
+    }
+  } else {
+    const formatLabel = track.container ?? track.codec;
+    if (formatLabel) {
+      parts.push(formatLabel.toUpperCase());
+    }
   }
 
-  if (track.bit_depth && track.sample_rate_hz) {
+  const showBitDepth = classified.qualityTier !== 'lossy' && Boolean(track.bit_depth);
+  if (showBitDepth && track.bit_depth && track.sample_rate_hz) {
     const khz = Number((track.sample_rate_hz / 1000).toFixed(1));
     parts.push(`${track.bit_depth}-bit / ${khz} kHz`);
   } else if (track.sample_rate_hz) {
     const khz = Number((track.sample_rate_hz / 1000).toFixed(1));
     parts.push(`${khz} kHz`);
-  } else if (track.bit_depth) {
+  } else if (showBitDepth && track.bit_depth) {
     parts.push(`${track.bit_depth}-bit`);
   }
 

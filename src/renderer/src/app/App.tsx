@@ -5,6 +5,7 @@ import { Sidebar } from '../components/Sidebar';
 import { TopHeader } from '../components/TopHeader';
 import { AlbumDetailPage } from '../pages/AlbumDetailPage';
 import { ArtistDetailPage } from '../pages/ArtistDetailPage';
+import { AudioLabPage } from '../pages/AudioLabPage';
 import { HomePage } from '../pages/HomePage';
 import { LibraryPage } from '../pages/LibraryPage';
 import { NowPlayingPage } from '../pages/NowPlayingPage';
@@ -89,6 +90,8 @@ export function App() {
         return <ArtistDetailPage />;
       case 'now-playing':
         return <NowPlayingPage />;
+      case 'audio-lab':
+        return <AudioLabPage />;
       case 'search':
         return <SearchPage />;
       case 'statistics':

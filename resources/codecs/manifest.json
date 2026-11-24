@@ -1,0 +1,219 @@
+{
+  "packName": "DoReMi Default Encoder Pack",
+  "manifestVersion": "2026.03.13",
+  "compatibleFoobarPackDate": "2026-03-13",
+  "schemaVersion": 2,
+  "notes": [
+    "Đồng bộ chính xác với bộ foobar2000 Free Encoder Pack phiên bản 2026-03-13 (9 encoder + nsutil.dll + 5 tệp license).",
+    "Tách bạch rõ Default Encoder Pack, Additional Decoders, Optional Encoders, FFmpeg/FFprobe và Built-in ALAC WASM.",
+    "Không tự tạo checksum SHA-256 giả: expectedSha256 để null cho đến khi xác minh trực tiếp trên bộ binary Windows thật.",
+    "Không đánh đồng miễn phí sử dụng với quyền phân phối lại: các mục license-verification-required hoặc non-redistributable không được tự động đóng gói phân phối."
+  ],
+  "defaultEncoderPack": {
+    "flac": {
+      "executables": ["flac.exe", "flac64.exe"],
+      "supportedPlatforms": ["win32", "darwin", "linux"],
+      "supportedArchitectures": ["x64", "x86", "arm64"],
+      "capabilities": ["encode", "decode"],
+      "requiredDependencies": [],
+      "license": "BSD-3-Clause",
+      "licenseFile": "flac_license.txt",
+      "redistributionStatus": "redistributable",
+      "officialSource": "https://xiph.org/flac/",
+      "expectedSha256": null
+    },
+    "lame": {
+      "executables": ["lame.exe", "lame64.exe"],
+      "supportedPlatforms": ["win32", "darwin", "linux"],
+      "supportedArchitectures": ["x64", "x86", "arm64"],
+      "capabilities": ["encode"],
+      "requiredDependencies": [],
+      "license": "LGPL-2.0-or-later",
+      "licenseFile": "lame_license.txt",
+      "redistributionStatus": "redistributable",
+      "officialSource": "https://lame.sourceforge.io/",
+      "expectedSha256": null
+    },
+    "opusenc": {
+      "executables": ["opusenc.exe"],
+      "supportedPlatforms": ["win32", "darwin", "linux"],
+      "supportedArchitectures": ["x64", "x86", "arm64"],
+      "capabilities": ["encode"],
+      "requiredDependencies": [],
+      "license": "BSD-3-Clause",
+      "licenseFile": "opusenc_license.txt",
+      "redistributionStatus": "redistributable",
+      "officialSource": "https://opus-codec.org/",
+      "expectedSha256": null
+    },
+    "oggenc": {
+      "executables": ["oggenc2.exe", "oggenc.exe"],
+      "supportedPlatforms": ["win32", "darwin", "linux"],
+      "supportedArchitectures": ["x64", "x86", "arm64"],
+      "capabilities": ["encode"],
+      "requiredDependencies": [],
+      "license": "BSD-3-Clause",
+      "licenseFile": null,
+      "redistributionStatus": "redistributable",
+      "officialSource": "https://xiph.org/vorbis/",
+      "expectedSha256": null
+    },
+    "wavpack": {
+      "executables": ["wavpack.exe"],
+      "supportedPlatforms": ["win32", "darwin", "linux"],
+      "supportedArchitectures": ["x64", "x86", "arm64"],
+      "capabilities": ["encode"],
+      "requiredDependencies": [],
+      "license": "BSD-3-Clause",
+      "licenseFile": "wavpack_license.txt",
+      "redistributionStatus": "redistributable",
+      "officialSource": "https://www.wavpack.com/",
+      "expectedSha256": null
+    },
+    "mpcenc": {
+      "executables": ["mpcenc.exe"],
+      "supportedPlatforms": ["win32", "darwin", "linux"],
+      "supportedArchitectures": ["x64", "x86"],
+      "capabilities": ["encode"],
+      "requiredDependencies": [],
+      "license": "LGPL-2.1",
+      "licenseFile": null,
+      "redistributionStatus": "redistributable",
+      "officialSource": "https://www.musepack.net/",
+      "expectedSha256": null
+    },
+    "refalac": {
+      "executables": ["refalac64.exe", "refalac.exe"],
+      "supportedPlatforms": ["win32"],
+      "supportedArchitectures": ["x64", "x86"],
+      "capabilities": ["encode"],
+      "requiredDependencies": [],
+      "license": "Apache-2.0 (Apple ALAC) / Public Domain (nu774)",
+      "licenseFile": null,
+      "redistributionStatus": "redistributable",
+      "officialSource": "https://github.com/nu774/qaac",
+      "expectedSha256": null
+    },
+    "qaac": {
+      "executables": ["qaac64.exe", "qaac.exe"],
+      "supportedPlatforms": ["win32"],
+      "supportedArchitectures": ["x64", "x86"],
+      "capabilities": ["encode"],
+      "requiredDependencies": ["CoreAudioToolbox.dll"],
+      "license": "Public Domain (CLI wrapper) + Apple Application Support (proprietary runtime)",
+      "licenseFile": null,
+      "redistributionStatus": "license-verification-required",
+      "officialSource": "https://github.com/nu774/qaac",
+      "expectedSha256": null
+    },
+    "fhgaacenc": {
+      "executables": ["fhgaacenc.exe"],
+      "supportedPlatforms": ["win32"],
+      "supportedArchitectures": ["x86", "x64"],
+      "capabilities": ["encode"],
+      "requiredDependencies": ["nsutil.dll", "enc_fhgaac.dll"],
+      "license": "fhgaacenc wrapper license + Winamp enc_fhgaac proprietary DLL",
+      "licenseFile": "fhgaacenc_license.txt",
+      "redistributionStatus": "license-verification-required",
+      "officialSource": "https://www.foobar2000.org/encoderpack",
+      "expectedSha256": null
+    }
+  },
+  "supportingDlls": [
+    {
+      "fileName": "nsutil.dll",
+      "includedInFoobarPack": true,
+      "relatedCodecs": ["fhgaacenc"],
+      "redistributionStatus": "license-verification-required",
+      "verificationStatus": "pending-desktop-verification",
+      "expectedSha256": null
+    }
+  ],
+  "licenseFiles": [
+    "fhgaacenc_license.txt",
+    "flac_license.txt",
+    "lame_license.txt",
+    "opusenc_license.txt",
+    "wavpack_license.txt"
+  ],
+  "additionalDecoders": {
+    "opusdec": {
+      "executables": ["opusdec.exe"],
+      "includedInFoobarPack": false,
+      "license": "BSD-3-Clause",
+      "redistributionStatus": "redistributable",
+      "officialSource": "https://opus-codec.org/",
+      "expectedSha256": null
+    },
+    "wvunpack": {
+      "executables": ["wvunpack.exe"],
+      "includedInFoobarPack": false,
+      "license": "BSD-3-Clause",
+      "redistributionStatus": "redistributable",
+      "officialSource": "https://www.wavpack.com/",
+      "expectedSha256": null
+    },
+    "mpcdec": {
+      "executables": ["mpcdec.exe"],
+      "includedInFoobarPack": false,
+      "license": "BSD-3-Clause",
+      "redistributionStatus": "redistributable",
+      "officialSource": "https://www.musepack.net/",
+      "expectedSha256": null
+    }
+  },
+  "optionalEncoders": {
+    "fdkaac": {
+      "executables": ["fdkaac.exe"],
+      "includedInFoobarPack": false,
+      "license": "Fraunhofer FDK AAC License",
+      "redistributionStatus": "license-verification-required",
+      "officialSource": "https://github.com/nu774/fdkaac",
+      "expectedSha256": null
+    },
+    "tak": {
+      "executables": ["Takc.exe", "takc.exe"],
+      "includedInFoobarPack": false,
+      "license": "Proprietary Freeware",
+      "redistributionStatus": "non-redistributable",
+      "officialSource": "https://thbeck.de/Tak/Tak.html",
+      "expectedSha256": null
+    },
+    "mac": {
+      "executables": ["MAC.exe", "mac.exe"],
+      "includedInFoobarPack": false,
+      "license": "BSD-3-Clause",
+      "redistributionStatus": "redistributable",
+      "officialSource": "https://www.monkeysaudio.com/",
+      "expectedSha256": null
+    }
+  },
+  "ffmpegSuite": {
+    "ffmpeg": {
+      "executables": ["ffmpeg.exe"],
+      "includedInFoobarPack": false,
+      "capabilities": ["encode", "decode", "stream-transcode"],
+      "license": "LGPL-2.1+ or GPL-2.0+",
+      "redistributionStatus": "license-verification-required",
+      "officialSource": "https://ffmpeg.org/",
+      "expectedSha256": null
+    },
+    "ffprobe": {
+      "executables": ["ffprobe.exe"],
+      "includedInFoobarPack": false,
+      "capabilities": ["probe"],
+      "license": "LGPL-2.1+ or GPL-2.0+",
+      "redistributionStatus": "license-verification-required",
+      "officialSource": "https://ffmpeg.org/",
+      "expectedSha256": null
+    }
+  },
+  "builtinDecoders": {
+    "alac-wasm": {
+      "capabilities": ["decode"],
+      "license": "MIT (@mgz-dev/alac)",
+      "redistributionStatus": "builtin",
+      "officialSource": "https://github.com/nicolo-ribaudo/alac"
+    }
+  }
+}

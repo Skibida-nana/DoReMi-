@@ -1,5 +1,12 @@
 import { useSyncExternalStore } from 'react';
 import type {
+  AudioEqPreset,
+  AudioLabSettings,
+  EqMode,
+  EqSlotId,
+  ParametricBandConfig,
+} from '../../../shared/types/audio-dsp';
+import type {
   CustomEditorialFontRecord,
   EditorialTypographySettings,
   FadeDurationSec,
@@ -10,12 +17,35 @@ import type {
   StatisticsQuery,
   StoredListeningSession,
 } from '../../../shared/types/stage5';
+import type { ReplayGainSettings } from '../../../shared/types/stage6';
+import {
+  applyPresetToSlot,
+  clampFinite,
+  cloneEqSlotConfig,
+  createDefaultAudioLabSettings,
+  createDefaultParametricBands,
+  createFlatGraphicGains,
+  EQ_MAX_GAIN_DB,
+  EQ_MIN_GAIN_DB,
+  getAllPresets,
+  normalizeAudioLabSettings,
+  PREAMP_MAX_DB,
+  PREAMP_MIN_DB,
+  roundTo,
+  sanitizeGraphicGains,
+  sanitizeParametricBand,
+  SYSTEM_AUDIO_PRESETS,
+} from '../../../shared/utils/audio-dsp';
 import {
   DEFAULT_EDITORIAL_TYPOGRAPHY,
   MAX_EDITORIAL_FONT_BYTES,
   normalizeEditorialTypographySettings,
   validateEditorialFontBytes,
 } from '../../../shared/utils/editorial-typography';
+import {
+  DEFAULT_REPLAYGAIN_SETTINGS,
+  normalizeReplayGainSettings,
+} from '../../../shared/utils/replaygain';
 import {
   ensureEditorialFontLoaded,
   unloadEditorialFont,
@@ -165,6 +195,8 @@ const DEFAULT_PREFERENCES: PersonalizationPreferences = {
     enabled: false,
     durationSec: 1,
   },
+  replayGain: { ...DEFAULT_REPLAYGAIN_SETTINGS },
+  audioLab: createDefaultAudioLabSettings(),
   editorialTypography: { ...DEFAULT_EDITORIAL_TYPOGRAPHY },
   editorialFonts: [],
 };
@@ -211,6 +243,8 @@ function loadInitialPreferences(): PersonalizationPreferences {
       enabled: Boolean(stored.transition?.enabled),
       durationSec: rawDur && validDurations.has(rawDur) ? rawDur : 1,
     },
+    replayGain: normalizeReplayGainSettings(stored.replayGain),
+    audioLab: normalizeAudioLabSettings(stored.audioLab),
     editorialTypography: normalizeEditorialTypographySettings(
       stored.editorialTypography,
       validFontIds,
@@ -249,6 +283,7 @@ export type AppRoute =
   | 'playlist-detail'
   | 'artist-detail'
   | 'now-playing'
+  | 'audio-lab'
   | 'search'
   | 'statistics'
   | 'settings'
@@ -346,6 +381,7 @@ class UiStore {
   private playbackTimer: ReturnType<typeof setInterval> | null = null;
   private swapTimers: Array<ReturnType<typeof setTimeout>> = [];
   private toastTimer: ReturnType<typeof setTimeout> | null = null;
+  private audioLabIpcTimer: ReturnType<typeof setTimeout> | null = null;
   private sampleSession: ActiveSampleSession | null = null;
   private hydratedFromElectron = false;
 
@@ -421,8 +457,14 @@ class UiStore {
       },
     };
 
-    // Sync initial Fade In/Out config into singleton AudioEngine immediately
+    // Sync initial Fade In/Out, Audio Lab DSP, and ReplayGain configs into singleton AudioEngine immediately
     playerActions.setTransitionConfig(initialPrefs.transition);
+    playerActions.setAudioLabSettings(
+      normalizeAudioLabSettings(initialPrefs.audioLab),
+    );
+    playerActions.setReplayGainSettings(
+      normalizeReplayGainSettings(initialPrefs.replayGain),
+    );
 
     // Mirror Electron local audio session checkpoints so Statistics view stays reactive
     setLocalSessionCheckpointListener((session) => {
@@ -463,15 +505,23 @@ class UiStore {
         window.losslessApi.getProfile(),
         window.losslessApi.getPreferences(),
       ]);
-      playerActions.setTransitionConfig(preferences.transition);
+      const normalizedPreferences: PersonalizationPreferences = {
+        ...preferences,
+        replayGain: normalizeReplayGainSettings(preferences.replayGain),
+        audioLab: normalizeAudioLabSettings(preferences.audioLab),
+      };
+      playerActions.setTransitionConfig(normalizedPreferences.transition);
+      playerActions.setAudioLabSettings(normalizedPreferences.audioLab!);
+      playerActions.setReplayGainSettings(normalizedPreferences.replayGain!);
+      safeWriteJson(PREFERENCES_STORAGE_KEY, normalizedPreferences);
       this.setState({
         profile,
-        preferences,
+        preferences: normalizedPreferences,
         appearance: {
-          dynamicAlbumColors: preferences.dynamicAlbumColors,
-          vinylAnimation: preferences.vinylAnimation,
-          reducedMotion: preferences.reducedMotion,
-          backgroundEffects: preferences.backgroundEffects,
+          dynamicAlbumColors: normalizedPreferences.dynamicAlbumColors,
+          vinylAnimation: normalizedPreferences.vinylAnimation,
+          reducedMotion: normalizedPreferences.reducedMotion,
+          backgroundEffects: normalizedPreferences.backgroundEffects,
         },
       });
     } catch {
@@ -736,6 +786,13 @@ class UiStore {
         ...current.transition,
         ...(partial.transition ?? {}),
       },
+      replayGain: normalizeReplayGainSettings({
+        ...(current.replayGain ?? DEFAULT_REPLAYGAIN_SETTINGS),
+        ...(partial.replayGain ?? {}),
+      }),
+      audioLab: normalizeAudioLabSettings(
+        partial.audioLab !== undefined ? partial.audioLab : current.audioLab,
+      ),
       editorialTypography: normalizeEditorialTypographySettings(
         {
           ...current.editorialTypography,
@@ -751,6 +808,12 @@ class UiStore {
 
     safeWriteJson(PREFERENCES_STORAGE_KEY, merged);
     playerActions.setTransitionConfig(merged.transition);
+    if (merged.audioLab) {
+      playerActions.setAudioLabSettings(merged.audioLab);
+    }
+    if (merged.replayGain) {
+      playerActions.setReplayGainSettings(merged.replayGain);
+    }
 
     this.setState({
       preferences: merged,
@@ -768,14 +831,21 @@ class UiStore {
       void window.losslessApi
         .updatePreferences(ipcPartial)
         .then((persisted) => {
-          playerActions.setTransitionConfig(persisted.transition);
+          const normalizedPersisted: PersonalizationPreferences = {
+            ...persisted,
+            replayGain: normalizeReplayGainSettings(persisted.replayGain),
+            audioLab: normalizeAudioLabSettings(persisted.audioLab),
+          };
+          playerActions.setTransitionConfig(normalizedPersisted.transition);
+          playerActions.setAudioLabSettings(normalizedPersisted.audioLab!);
+          playerActions.setReplayGainSettings(normalizedPersisted.replayGain!);
           this.setState({
-            preferences: persisted,
+            preferences: normalizedPersisted,
             appearance: {
-              dynamicAlbumColors: persisted.dynamicAlbumColors,
-              vinylAnimation: persisted.vinylAnimation,
-              reducedMotion: persisted.reducedMotion,
-              backgroundEffects: persisted.backgroundEffects,
+              dynamicAlbumColors: normalizedPersisted.dynamicAlbumColors,
+              vinylAnimation: normalizedPersisted.vinylAnimation,
+              reducedMotion: normalizedPersisted.reducedMotion,
+              backgroundEffects: normalizedPersisted.backgroundEffects,
             },
           });
         })
@@ -925,6 +995,386 @@ class UiStore {
         ...partial,
       },
     });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Phase 7: Audio Lab DSP & ReplayGain (Single Source of Truth -> AudioEngine)
+  // ---------------------------------------------------------------------------
+
+  getAudioLabSettings(): AudioLabSettings {
+    return normalizeAudioLabSettings(this.state.preferences.audioLab);
+  }
+
+  getReplayGainSettings(): ReplayGainSettings {
+    return normalizeReplayGainSettings(this.state.preferences.replayGain);
+  }
+
+  private commitAudioLabSettings(next: AudioLabSettings, debounceIpc = false): void {
+    const normalized = normalizeAudioLabSettings(next);
+    const merged: PersonalizationPreferences = {
+      ...this.state.preferences,
+      audioLab: normalized,
+    };
+
+    // Immediate 0ms audio DSP update + localStorage mirror
+    playerActions.setAudioLabSettings(normalized);
+    safeWriteJson(PREFERENCES_STORAGE_KEY, merged);
+    this.setState({ preferences: merged });
+
+    if (typeof window !== 'undefined' && window.losslessApi) {
+      if (this.audioLabIpcTimer) {
+        clearTimeout(this.audioLabIpcTimer);
+        this.audioLabIpcTimer = null;
+      }
+      const flush = () => {
+        const latest = this.getAudioLabSettings();
+        void window.losslessApi?.updatePreferences({ audioLab: latest }).catch(() => {});
+      };
+      if (debounceIpc) {
+        this.audioLabIpcTimer = setTimeout(flush, 250);
+      } else {
+        flush();
+      }
+    }
+  }
+
+  setAudioLabEnabled(enabled: boolean): void {
+    const current = this.getAudioLabSettings();
+    if (current.enabled === enabled) {
+      return;
+    }
+    this.commitAudioLabSettings({ ...current, enabled }, false);
+    if (enabled && this.state.activeSource === 'local') {
+      void playerActions.ensureDspReady();
+    }
+  }
+
+  setEqMode(mode: EqMode): void {
+    const current = this.getAudioLabSettings();
+    const slotId = current.activeSlot;
+    const slot = cloneEqSlotConfig(current.slots[slotId]);
+    if (slot.mode === mode) {
+      return;
+    }
+    slot.mode = mode;
+    this.commitAudioLabSettings(
+      {
+        ...current,
+        slots: { ...current.slots, [slotId]: slot },
+      },
+      false,
+    );
+  }
+
+  setActiveEqSlot(slotId: EqSlotId): void {
+    const current = this.getAudioLabSettings();
+    if (current.activeSlot === slotId) {
+      return;
+    }
+    this.commitAudioLabSettings({ ...current, activeSlot: slotId }, false);
+  }
+
+  copyActiveEqSlotToOther(): void {
+    const current = this.getAudioLabSettings();
+    const sourceId = current.activeSlot;
+    const targetId: EqSlotId = sourceId === 'A' ? 'B' : 'A';
+    this.commitAudioLabSettings(
+      {
+        ...current,
+        slots: {
+          ...current.slots,
+          [targetId]: cloneEqSlotConfig(current.slots[sourceId]),
+        },
+      },
+      false,
+    );
+    this.showToast(`Đã sao chép cấu hình Slot ${sourceId} sang Slot ${targetId}`);
+  }
+
+  setGraphicBandGain(bandIndex: number, gainDb: number): void {
+    const current = this.getAudioLabSettings();
+    const slotId = current.activeSlot;
+    const slot = cloneEqSlotConfig(current.slots[slotId]);
+    if (bandIndex < 0 || bandIndex >= slot.graphicGainsDb.length) {
+      return;
+    }
+    const clamped = roundTo(clampFinite(gainDb, EQ_MIN_GAIN_DB, EQ_MAX_GAIN_DB, 0), 1);
+    slot.graphicGainsDb[bandIndex] = clamped;
+    slot.graphicGainsDb = sanitizeGraphicGains(slot.graphicGainsDb);
+    slot.activePresetId = null;
+    this.commitAudioLabSettings(
+      {
+        ...current,
+        slots: { ...current.slots, [slotId]: slot },
+      },
+      true,
+    );
+  }
+
+  resetGraphicBands(): void {
+    const current = this.getAudioLabSettings();
+    const slotId = current.activeSlot;
+    const slot = cloneEqSlotConfig(current.slots[slotId]);
+    slot.graphicGainsDb = createFlatGraphicGains();
+    slot.activePresetId = slot.mode === 'graphic' && slot.preampDb === 0 ? 'sys-flat' : null;
+    this.commitAudioLabSettings(
+      {
+        ...current,
+        slots: { ...current.slots, [slotId]: slot },
+      },
+      false,
+    );
+  }
+
+  updateParametricBand(bandIndex: number, patch: Partial<ParametricBandConfig>): void {
+    const current = this.getAudioLabSettings();
+    const slotId = current.activeSlot;
+    const slot = cloneEqSlotConfig(current.slots[slotId]);
+    if (bandIndex < 0 || bandIndex >= slot.parametricBands.length) {
+      return;
+    }
+    slot.parametricBands[bandIndex] = sanitizeParametricBand(
+      { ...slot.parametricBands[bandIndex], ...patch },
+      bandIndex,
+    );
+    slot.activePresetId = null;
+    this.commitAudioLabSettings(
+      {
+        ...current,
+        slots: { ...current.slots, [slotId]: slot },
+      },
+      true,
+    );
+  }
+
+  resetParametricBand(bandIndex: number): void {
+    const defaults = createDefaultParametricBands();
+    if (bandIndex < 0 || bandIndex >= defaults.length) {
+      return;
+    }
+    this.updateParametricBand(bandIndex, defaults[bandIndex]);
+  }
+
+  resetParametricBands(): void {
+    const current = this.getAudioLabSettings();
+    const slotId = current.activeSlot;
+    const slot = cloneEqSlotConfig(current.slots[slotId]);
+    slot.parametricBands = createDefaultParametricBands();
+    slot.activePresetId = slot.mode === 'parametric' && slot.preampDb === 0 ? 'sys-flat' : null;
+    this.commitAudioLabSettings(
+      {
+        ...current,
+        slots: { ...current.slots, [slotId]: slot },
+      },
+      false,
+    );
+  }
+
+  setEqPreampDb(preampDb: number): void {
+    const current = this.getAudioLabSettings();
+    const slotId = current.activeSlot;
+    const slot = cloneEqSlotConfig(current.slots[slotId]);
+    slot.preampDb = roundTo(clampFinite(preampDb, PREAMP_MIN_DB, PREAMP_MAX_DB, 0), 1);
+    slot.activePresetId = null;
+    this.commitAudioLabSettings(
+      {
+        ...current,
+        slots: { ...current.slots, [slotId]: slot },
+      },
+      true,
+    );
+  }
+
+  setEqAutoHeadroom(enabled: boolean): void {
+    const current = this.getAudioLabSettings();
+    const slotId = current.activeSlot;
+    const slot = cloneEqSlotConfig(current.slots[slotId]);
+    slot.autoHeadroom = enabled;
+    this.commitAudioLabSettings(
+      {
+        ...current,
+        slots: { ...current.slots, [slotId]: slot },
+      },
+      false,
+    );
+  }
+
+  setSpectrumEnabled(enabled: boolean): void {
+    const current = this.getAudioLabSettings();
+    this.commitAudioLabSettings({ ...current, spectrumEnabled: enabled }, false);
+  }
+
+  applyEqPreset(presetId: string): void {
+    const current = this.getAudioLabSettings();
+    const preset = getAllPresets(current).find((p) => p.id === presetId);
+    if (!preset) {
+      return;
+    }
+    const slotId = current.activeSlot;
+    const nextSlot = applyPresetToSlot(preset, current.slots[slotId]);
+    this.commitAudioLabSettings(
+      {
+        ...current,
+        enabled: true,
+        slots: { ...current.slots, [slotId]: nextSlot },
+      },
+      false,
+    );
+    if (this.state.activeSource === 'local') {
+      void playerActions.ensureDspReady();
+    }
+  }
+
+  saveCustomEqPreset(rawName: string, rawDescription?: string): AudioEqPreset | null {
+    const name = rawName.normalize('NFC').replace(/[\u0000-\u001F\u007F]/g, '').trim().slice(0, 48);
+    if (!name) {
+      return null;
+    }
+    const current = this.getAudioLabSettings();
+    const slotId = current.activeSlot;
+    const slot = cloneEqSlotConfig(current.slots[slotId]);
+    const nowIso = new Date().toISOString();
+    const id = `custom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    const newPreset: AudioEqPreset = {
+      id,
+      name,
+      description:
+        rawDescription?.trim().slice(0, 140) ||
+        `Preset ${slot.mode === 'parametric' ? 'Parametric 8-band' : 'Graphic 10-band'} tùy chỉnh.`,
+      isSystem: false,
+      mode: slot.mode,
+      graphicGainsDb: [...slot.graphicGainsDb],
+      parametricBands: slot.parametricBands.map((b) => ({ ...b })),
+      preampDb: slot.preampDb,
+      autoHeadroom: slot.autoHeadroom,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    };
+    slot.activePresetId = id;
+    this.commitAudioLabSettings(
+      {
+        ...current,
+        slots: { ...current.slots, [slotId]: slot },
+        customPresets: [newPreset, ...current.customPresets].slice(0, 64),
+      },
+      false,
+    );
+    this.showToast(`Đã lưu preset "${name}"`);
+    return newPreset;
+  }
+
+  renameCustomEqPreset(presetId: string, rawName: string): boolean {
+    if (SYSTEM_AUDIO_PRESETS.some((p) => p.id === presetId)) {
+      this.showToast('Không thể đổi tên preset hệ thống mặc định.');
+      return false;
+    }
+    const name = rawName.normalize('NFC').replace(/[\u0000-\u001F\u007F]/g, '').trim().slice(0, 48);
+    if (!name) {
+      return false;
+    }
+    const current = this.getAudioLabSettings();
+    const exists = current.customPresets.some((p) => p.id === presetId);
+    if (!exists) {
+      return false;
+    }
+    const nowIso = new Date().toISOString();
+    const customPresets = current.customPresets.map((p) =>
+      p.id === presetId ? { ...p, name, updatedAt: nowIso } : p,
+    );
+    this.commitAudioLabSettings({ ...current, customPresets }, false);
+    this.showToast(`Đã đổi tên preset thành "${name}"`);
+    return true;
+  }
+
+  duplicateEqPreset(presetId: string): AudioEqPreset | null {
+    const current = this.getAudioLabSettings();
+    const source = getAllPresets(current).find((p) => p.id === presetId);
+    if (!source) {
+      return null;
+    }
+    const nowIso = new Date().toISOString();
+    const id = `custom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    const copyName = `${source.name} (Bản sao)`.slice(0, 48);
+    const duplicated: AudioEqPreset = {
+      ...source,
+      id,
+      name: copyName,
+      isSystem: false,
+      graphicGainsDb: [...source.graphicGainsDb],
+      parametricBands: source.parametricBands.map((b) => ({ ...b })),
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    };
+    const slotId = current.activeSlot;
+    const nextSlot = applyPresetToSlot(duplicated, current.slots[slotId]);
+    this.commitAudioLabSettings(
+      {
+        ...current,
+        slots: { ...current.slots, [slotId]: nextSlot },
+        customPresets: [duplicated, ...current.customPresets].slice(0, 64),
+      },
+      false,
+    );
+    this.showToast(`Đã nhân bản preset "${copyName}"`);
+    return duplicated;
+  }
+
+  deleteCustomEqPreset(presetId: string): boolean {
+    if (SYSTEM_AUDIO_PRESETS.some((p) => p.id === presetId)) {
+      this.showToast('Preset hệ thống mặc định được bảo vệ và không thể xóa.');
+      return false;
+    }
+    const current = this.getAudioLabSettings();
+    const target = current.customPresets.find((p) => p.id === presetId);
+    if (!target) {
+      return false;
+    }
+    const customPresets = current.customPresets.filter((p) => p.id !== presetId);
+    const slotA = cloneEqSlotConfig(current.slots.A);
+    const slotB = cloneEqSlotConfig(current.slots.B);
+    if (slotA.activePresetId === presetId) {
+      slotA.activePresetId = null;
+    }
+    if (slotB.activePresetId === presetId) {
+      slotB.activePresetId = null;
+    }
+    this.commitAudioLabSettings(
+      {
+        ...current,
+        slots: { A: slotA, B: slotB },
+        customPresets,
+      },
+      false,
+    );
+    this.showToast(`Đã xóa preset "${target.name}"`);
+    return true;
+  }
+
+  resetActiveEqSlotToFlat(): void {
+    const current = this.getAudioLabSettings();
+    const slotId = current.activeSlot;
+    const slot = cloneEqSlotConfig(current.slots[slotId]);
+    slot.graphicGainsDb = createFlatGraphicGains();
+    slot.parametricBands = createDefaultParametricBands();
+    slot.preampDb = 0;
+    slot.autoHeadroom = false;
+    slot.activePresetId = 'sys-flat';
+    this.commitAudioLabSettings(
+      {
+        ...current,
+        slots: { ...current.slots, [slotId]: slot },
+      },
+      false,
+    );
+    this.showToast(`Đã đặt Slot ${slotId} về đáp tuyến phẳng (Flat 0 dB)`);
+  }
+
+  updateReplayGainSettings(partial: Partial<ReplayGainSettings>): void {
+    const next = normalizeReplayGainSettings({
+      ...this.getReplayGainSettings(),
+      ...partial,
+    });
+    this.updatePreferences({ replayGain: next });
   }
 
   async importCustomBackgroundDesktop(): Promise<void> {

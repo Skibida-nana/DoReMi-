@@ -1,10 +1,18 @@
 import type {
   AppRuntimeInfo,
+  ClearLibraryResult,
   ImportSummary,
+  LibraryExclusionRecord,
   LibrarySnapshot,
+  ReimportExcludedResult,
+  RemoveTracksResult,
+  RemoveWatchedFolderMode,
+  RemoveWatchedFolderResult,
   ScanProgressEvent,
   TrackStatusChangedEvent,
+  TrashTrackFilesResult,
   VerifyTrackResult,
+  WatchedFolderSummary,
 } from './library';
 import type {
   CustomEditorialFontRecord,
@@ -119,4 +127,58 @@ export interface LosslessDesktopApi {
     callback: (event: import('./stage6').ExternalFilesOpenEvent) => void,
   ): () => void;
   getDiagnosticLogs?(): Promise<import('./stage6').DiagnosticLogEntry[]>;
+
+  // Phase 8: Library Track Removal, Exclusions, Watched Folders & Optional Recycle Bin (Not yet wired in preload/IPC)
+  removeTracksFromLibrary?(
+    trackIds: readonly string[],
+    options?: { addExclusion?: boolean },
+  ): Promise<RemoveTracksResult>;
+  trashOriginalTrackFiles?(trackIds: readonly string[]): Promise<TrashTrackFilesResult>;
+  showTrackInFolder?(trackId: string): Promise<{ shown: boolean; error?: string }>;
+  listWatchedFolders?(): Promise<WatchedFolderSummary[]>;
+  rescanWatchedFolder?(rootId: string): Promise<ImportSummary>;
+  removeWatchedFolder?(
+    rootId: string,
+    mode: RemoveWatchedFolderMode,
+  ): Promise<RemoveWatchedFolderResult>;
+  clearAllImportedMusic?(): Promise<ClearLibraryResult>;
+  listExcludedTracks?(): Promise<LibraryExclusionRecord[]>;
+  reimportExcludedTracks?(exclusionIds?: readonly string[]): Promise<ReimportExcludedResult>;
+  clearExclusions?(exclusionIds?: readonly string[]): Promise<{ clearedCount: number }>;
+
+  // Native Audio Codec Engine, Default Encoder Pack, Converter, Analyzer & Update Manager (Isolated in Phase 01; wired in Phase 04/05)
+  getCodecInventory?(): Promise<import('./codec-engine').CodecInventorySnapshot>;
+  rescanCodecs?(): Promise<import('./codec-engine').CodecInventorySnapshot>;
+  importEncoderPackFolder?(): Promise<import('./codec-engine').CodecImportPackResult>;
+  importCustomCodecBinary?(
+    codecId: import('./codec-engine').CodecId,
+  ): Promise<import('./codec-engine').CodecImportBinaryResult>;
+  removeCustomCodecBinary?(
+    codecId: import('./codec-engine').CodecId,
+  ): Promise<import('./codec-engine').CodecInventorySnapshot>;
+  openCodecsDirectory?(): Promise<{ opened: boolean; path: string }>;
+  checkCodecUpdates?(manifestUrl?: string): Promise<import('./codec-engine').CodecUpdateCheckResult>;
+  rollbackCodecPack?(): Promise<{ rolledBack: boolean; message: string; inventory: import('./codec-engine').CodecInventorySnapshot }>;
+  analyzeTrackAudio?(trackId: string): Promise<import('./codec-engine').AudioAnalysisReport>;
+  analyzeAudioFileDialog?(): Promise<{ canceled: boolean; report: import('./codec-engine').AudioAnalysisReport | null; error?: string }>;
+  selectConvertOutputDirectory?(): Promise<{ canceled: boolean; directoryPath: string | null }>;
+  selectConvertInputFiles?(): Promise<{ canceled: boolean; items: import('./codec-engine').ConversionJobInputItem[] }>;
+  getConversionQueue?(): Promise<import('./codec-engine').ConversionQueueSnapshot>;
+  enqueueAudioConversion?(
+    items: readonly import('./codec-engine').ConversionJobInputItem[],
+    options: Partial<import('./codec-engine').AudioConvertOptions>,
+  ): Promise<import('./codec-engine').ConversionQueueSnapshot>;
+  cancelConversionJob?(jobId: string): Promise<import('./codec-engine').ConversionQueueSnapshot>;
+  cancelAllConversionJobs?(): Promise<import('./codec-engine').ConversionQueueSnapshot>;
+  retryFailedConversionJobs?(): Promise<import('./codec-engine').ConversionQueueSnapshot>;
+  clearFinishedConversionJobs?(): Promise<import('./codec-engine').ConversionQueueSnapshot>;
+  onConversionQueueUpdated?(
+    callback: (snapshot: import('./codec-engine').ConversionQueueSnapshot) => void,
+  ): () => void;
+  onConversionJobProgress?(
+    callback: (event: import('./codec-engine').ConversionProgressEvent) => void,
+  ): () => void;
+  getStreamingTranscodingPlans?(
+    trackId?: string,
+  ): Promise<import('./codec-engine').StreamingTranscodePlan[]>;
 }

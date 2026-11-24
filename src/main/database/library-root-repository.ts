@@ -93,4 +93,9 @@ export class LibraryRootRepository {
     const result = stmt.run(id);
     return result.changes > 0;
   }
+
+  deleteAllRoots(): number {
+    const stmt = this.stmtFindByNormalizedPath.database.prepare('DELETE FROM library_roots');
+    return stmt.run().changes;
+  }
 }

@@ -6,6 +6,7 @@ import {
   Library,
   Search,
   Settings,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { uiStore, useUiState, type AppRoute } from '../stores/ui-store';
 import { ProfileAvatar } from './ProfileAvatar';
@@ -61,6 +62,13 @@ export function Sidebar() {
       icon: BarChart3,
       isActive: (route) => route === 'statistics',
       onClick: () => uiStore.navigate('statistics'),
+    },
+    {
+      id: 'audio-lab',
+      label: 'Audio Lab — Equalizer & DSP',
+      icon: SlidersHorizontal,
+      isActive: (route) => route === 'audio-lab',
+      onClick: () => uiStore.navigate('audio-lab'),
     },
   ];
 

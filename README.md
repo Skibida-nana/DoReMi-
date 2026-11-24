@@ -6,6 +6,8 @@
 - Không sao chép, di chuyển, chỉnh sửa tag hay xóa file nhạc gốc.
 - Lưu danh sách nhạc và đường dẫn gốc trong cơ sở dữ liệu SQLite đặt tại thư mục `userData` của Windows (`%APPDATA%\Lossless Player\library.db`).
 
+> **Nguyên tắc phát triển chính thức (Music Player First):** Mọi đóng góp và giai đoạn phát triển tiếp theo của DoReMi phải tuân thủ [`DOREMI_CORE_PRINCIPLES.md`](./DOREMI_CORE_PRINCIPLES.md) (cùng trạng thái baseline tại [`DOREMI_CODEC_RECOVERY_STATUS.md`](./DOREMI_CODEC_RECOVERY_STATUS.md)).
+
 ---
 
 ## 1. Cấu trúc mã nguồn

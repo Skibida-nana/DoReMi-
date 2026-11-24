@@ -17,11 +17,19 @@ import type {
   PersonalizationPreferences,
 } from '../../shared/types/stage5';
 import {
+  createDefaultAudioLabSettings,
+  normalizeAudioLabSettings,
+} from '../../shared/utils/audio-dsp';
+import {
   DEFAULT_EDITORIAL_TYPOGRAPHY,
   MAX_EDITORIAL_FONT_BYTES,
   normalizeEditorialTypographySettings,
   validateEditorialFontBytes,
 } from '../../shared/utils/editorial-typography';
+import {
+  DEFAULT_REPLAYGAIN_SETTINGS,
+  normalizeReplayGainSettings,
+} from '../../shared/utils/replaygain';
 
 export const MAX_PROFILE_MEDIA_BYTES = 10 * 1024 * 1024; // 10 MB default limit
 export const MAX_DISPLAY_NAME_LENGTH = 48;
@@ -210,6 +218,8 @@ export const DEFAULT_PERSONALIZATION_PREFERENCES: PersonalizationPreferences = {
     enabled: false,
     durationSec: 1,
   },
+  replayGain: { ...DEFAULT_REPLAYGAIN_SETTINGS },
+  audioLab: createDefaultAudioLabSettings(),
   editorialTypography: { ...DEFAULT_EDITORIAL_TYPOGRAPHY },
   editorialFonts: [],
 };
@@ -524,6 +534,8 @@ export class ProfileService {
         enabled: Boolean(stored.transition?.enabled),
         durationSec,
       },
+      replayGain: normalizeReplayGainSettings(stored.replayGain),
+      audioLab: normalizeAudioLabSettings(stored.audioLab),
       editorialTypography: normalizeEditorialTypographySettings(
         stored.editorialTypography,
         validFontIds,
@@ -544,6 +556,13 @@ export class ProfileService {
         ...current.transition,
         ...(partial.transition ?? {}),
       },
+      replayGain: normalizeReplayGainSettings({
+        ...(current.replayGain ?? DEFAULT_REPLAYGAIN_SETTINGS),
+        ...(partial.replayGain ?? {}),
+      }),
+      audioLab: normalizeAudioLabSettings(
+        partial.audioLab !== undefined ? partial.audioLab : current.audioLab,
+      ),
       editorialTypography: normalizeEditorialTypographySettings(
         {
           ...current.editorialTypography,
