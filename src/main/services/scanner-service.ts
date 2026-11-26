@@ -7,17 +7,21 @@ import { extractFileExtension } from './path-utils';
 export interface FolderDiscoveryResult {
   files: string[];
   errors: ImportErrorItem[];
+  failedDirectories: string[];
+  canceled: boolean;
 }
 
 export interface DiscoverOptions {
+  recursive?: boolean;
+  signal?: AbortSignal;
   onProgress?: (event: ScanProgressEvent) => void;
 }
 
 /**
- * Asynchronously traverses a root directory and all subdirectories to find supported audio files.
+ * Asynchronously traverses a root directory (and optionally subdirectories) to find supported audio files.
  * - Never modifies or moves files.
  * - Prevents symlink loops via canonical realpath tracking.
- * - Isolates per-folder read/permission errors so scanning continues smoothly.
+ * - Supports cancellation via AbortSignal and isolates per-folder read/permission errors.
  */
 export async function discoverAudioFilesInFolder(
   rootFolder: string,
@@ -25,16 +29,24 @@ export async function discoverAudioFilesInFolder(
 ): Promise<FolderDiscoveryResult> {
   const discoveredFiles: string[] = [];
   const errors: ImportErrorItem[] = [];
+  const failedDirectories: string[] = [];
   const visitedDirs = new Set<string>();
-  const queue: string[] = [rootFolder];
+  const recursive = options.recursive !== false;
+  const queue: Array<{ dir: string; depth: number }> = [{ dir: rootFolder, depth: 0 }];
 
   while (queue.length > 0) {
-    const currentDir = queue.shift()!;
+    if (options.signal?.aborted) {
+      return { files: discoveredFiles, errors, failedDirectories, canceled: true };
+    }
+
+    const current = queue.shift()!;
+    const currentDir = current.dir;
 
     let canonicalDir: string;
     try {
       canonicalDir = await fs.realpath(currentDir);
     } catch (error) {
+      failedDirectories.push(currentDir);
       errors.push({
         path: currentDir,
         reason: `Không thể truy cập thư mục: ${error instanceof Error ? error.message : String(error)}`,
@@ -51,6 +63,7 @@ export async function discoverAudioFilesInFolder(
     try {
       entries = await fs.readdir(currentDir, { withFileTypes: true });
     } catch (error) {
+      failedDirectories.push(currentDir);
       errors.push({
         path: currentDir,
         reason: `Không thể đọc danh sách thư mục: ${error instanceof Error ? error.message : String(error)}`,
@@ -59,10 +72,16 @@ export async function discoverAudioFilesInFolder(
     }
 
     for (const entry of entries) {
+      if (options.signal?.aborted) {
+        return { files: discoveredFiles, errors, failedDirectories, canceled: true };
+      }
+
       const fullPath = path.join(currentDir, entry.name);
 
       if (entry.isDirectory()) {
-        queue.push(fullPath);
+        if (recursive) {
+          queue.push({ dir: fullPath, depth: current.depth + 1 });
+        }
         continue;
       }
 
@@ -70,7 +89,9 @@ export async function discoverAudioFilesInFolder(
         try {
           const stat = await fs.stat(fullPath);
           if (stat.isDirectory()) {
-            queue.push(fullPath);
+            if (recursive) {
+              queue.push({ dir: fullPath, depth: current.depth + 1 });
+            }
           } else if (stat.isFile() && isAudioExtensionSupported(extractFileExtension(fullPath))) {
             discoveredFiles.push(fullPath);
           }
@@ -96,9 +117,14 @@ export async function discoverAudioFilesInFolder(
       message: `Đang quét thư mục... đã tìm thấy ${discoveredFiles.length} file nhạc`,
     });
 
-    // Yield back to the event loop so IPC and window rendering stay responsive
+    // Yield back to the event loop so IPC and window rendering stay responsive on U-series laptops
     await new Promise<void>((resolve) => setImmediate(resolve));
   }
 
-  return { files: discoveredFiles, errors };
+  return {
+    files: discoveredFiles,
+    errors,
+    failedDirectories,
+    canceled: Boolean(options.signal?.aborted),
+  };
 }

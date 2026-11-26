@@ -62,10 +62,23 @@ jobs:
             }
           }
 
+      - name: Ensure Electron runtime & run environment doctor
+        run: |
+          npm run ensure:electron
+          if ($LASTEXITCODE -ne 0) {
+            throw "ensure-electron failed with exit code $LASTEXITCODE."
+          }
+
+          npm run doctor
+          if ($LASTEXITCODE -ne 0) {
+            throw "Environment doctor failed with exit code $LASTEXITCODE."
+          }
+
       - name: Verify Windows native bindings & production dependencies
         run: |
           $requiredPaths = @(
             "node_modules/@fontsource/poppins/package.json",
+            "node_modules/@mgz-dev/alac/package.json",
             "node_modules/better-sqlite3/package.json",
             "node_modules/music-metadata/package.json",
             "node_modules/@rolldown/binding-win32-x64-msvc/package.json",
@@ -90,8 +103,29 @@ jobs:
       - name: TypeScript type check
         run: npm run lint
 
-      - name: Run unit & SQLite integration tests
-        run: npm test
+      - name: Run Windows-compatible playback, SQLite, diagnostics & Unicode tests
+        run: |
+          # Note: tests/database.test.ts (ISS-OPEN-01 / ADR-016) and POSIX-only symlink/#!/bin/sh
+          # codec fixture tests (codec-analyzer/codec-conversion/codec-manager) are excluded here
+          # until Phase 4/5 without mutating ADR-016 boundaries.
+          npm run test:electron -- `
+            tests/artwork-service.test.ts `
+            tests/audio-engine.test.ts `
+            tests/audio-protocol.test.ts `
+            tests/diagnostics-unicode.test.ts `
+            tests/editorial-typography.test.ts `
+            tests/flac-sanitizer.test.ts `
+            tests/library-service.test.ts `
+            tests/lyrics-service.test.ts `
+            tests/metadata-override.test.ts `
+            tests/metadata-scanner.test.ts `
+            tests/path-utils.test.ts `
+            tests/phase7-audio-dsp.test.ts `
+            tests/phase7-m4a-alac.test.ts `
+            tests/stage5-profile-stats.test.ts
+          if ($LASTEXITCODE -ne 0) {
+            throw "Core test suite failed with exit code $LASTEXITCODE."
+          }
 
       - name: Verify or rebuild better-sqlite3 for Electron ABI
         run: |
@@ -151,6 +185,9 @@ jobs:
 
           Write-Host "Main, Preload, and Renderer bundles verified."
 
+      - name: Run built Electron startup smoke test
+        run: npm run smoke:electron
+
       - name: Package Windows x64 Setup EXE & Portable ZIP (electron-builder)
         run: |
           if (Test-Path "release") {
@@ -161,7 +198,7 @@ jobs:
             throw "electron-builder failed with exit code $LASTEXITCODE."
           }
 
-      - name: Verify Setup EXE, Portable ZIP, ASAR unpack & packaged SQLite ABI
+      - name: Verify Setup EXE, Portable ZIP, ASAR unpack & packaged app startup smoke test
         run: |
           Add-Type -AssemblyName System.IO.Compression.FileSystem
 
@@ -193,6 +230,12 @@ jobs:
             }
           } finally {
             Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
+          }
+
+          # Full GUI/IPC/SQLite/Renderer smoke test on packaged DoReMi.exe using isolated temp userData
+          node scripts/smoke-electron.mjs --exe $unpackedExe
+          if ($LASTEXITCODE -ne 0) {
+            throw "Packaged DoReMi.exe startup smoke test failed."
           }
 
           # Verify Setup EXE exists and is non-trivial

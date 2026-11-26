@@ -6,12 +6,17 @@ import {
   parseTrackIdFromMediaUrl,
 } from '../../shared/contracts/media-protocol';
 import { isAlacTrackMetadata } from '../../shared/utils/audio-codec';
+import type { DiagnosticRecordInput } from '../../shared/types/stage6';
 import type { TrackRepository } from '../database/track-repository';
 import {
   detectMp4AudioCodec,
   getAlacStreamManager,
   type AlacStreamManager,
 } from './alac-decoder';
+import {
+  createNormalizedFlacByteStream,
+  resolveFlacStreamPlan,
+} from './flac-stream-sanitizer';
 import { extractFileExtension } from './path-utils';
 
 export type ByteRangeParseResult =
@@ -100,6 +105,7 @@ export function parseByteRangeHeader(
 export interface AudioProtocolDeps {
   trackRepo: Pick<TrackRepository, 'findById' | 'updateStatus'>;
   onTrackMissing?: (trackId: string) => void;
+  onDiagnostic?: (entry: DiagnosticRecordInput) => void;
   alacManager?: AlacStreamManager;
 }
 
@@ -130,7 +136,7 @@ export function isAllowedMediaCorsOrigin(originHeader: string | null): boolean {
   }
 }
 
-function buildMediaCorsHeaders(originHeader: string | null): Record<string, string> {
+export function buildMediaCorsHeaders(originHeader: string | null): Record<string, string> {
   // Packaged file:// sends Origin: "null"; anonymous CORS audio requires "*" or matching origin.
   const allowOrigin =
     originHeader && originHeader !== 'null' && isAllowedMediaCorsOrigin(originHeader)
@@ -196,11 +202,19 @@ export async function resolveTrackMediaResponse(
   let fileStat;
   try {
     fileStat = await fsPromises.stat(track.original_path);
-  } catch {
+  } catch (err) {
     if (track.status !== 'missing') {
       deps.trackRepo.updateStatus(track.id, 'missing');
       deps.onTrackMissing?.(track.id);
     }
+    deps.onDiagnostic?.({
+      level: 'warn',
+      scope: 'audio-stream',
+      code: 'ERR_FILE_MISSING',
+      stage: 'stream-load',
+      message: `Không tìm thấy file âm thanh khi stream track ${track.id}`,
+      detail: err instanceof Error ? err.message : String(err),
+    });
     return new Response('Not Found: Source audio file is missing.', {
       status: 404,
       headers: corsHeaders,
@@ -238,7 +252,25 @@ export async function resolveTrackMediaResponse(
     }
   }
 
-  const fileSize = fileStat.size;
+  const flacPlan =
+    ext === '.flac'
+      ? await resolveFlacStreamPlan(track.original_path, fileStat.size, fileStat.mtimeMs)
+      : null;
+
+  if (
+    flacPlan?.normalized &&
+    (!request.headers.get('range') || request.headers.get('range') === 'bytes=0-')
+  ) {
+    deps.onDiagnostic?.({
+      level: 'info',
+      scope: 'flac-sanitizer',
+      stage: 'stream-load',
+      message: `Đã chuẩn hóa header FLAC ảo khi phát track ${track.id}`,
+      detail: `strippedPictureBlocks=${flacPlan.strippedPictureBlocks}, strippedId3Header=${flacPlan.strippedId3Header}, virtualSize=${flacPlan.virtualFileSize}`,
+    });
+  }
+
+  const fileSize = flacPlan ? flacPlan.virtualFileSize : fileStat.size;
   const contentType = getMimeTypeForExtension(ext);
   const rangeResult = parseByteRangeHeader(request.headers.get('range'), fileSize);
 
@@ -275,8 +307,12 @@ export async function resolveTrackMediaResponse(
     });
   }
 
-  const nodeStream = fs.createReadStream(track.original_path, { start, end });
-  const webStream = Readable.toWeb(nodeStream) as ReadableStream<Uint8Array>;
+  const webStream =
+    flacPlan && flacPlan.normalized
+      ? createNormalizedFlacByteStream(track.original_path, flacPlan, start, end)
+      : (Readable.toWeb(
+          fs.createReadStream(track.original_path, { start, end }),
+        ) as ReadableStream<Uint8Array>);
 
   return new Response(webStream, {
     status: isPartial ? 206 : 200,

@@ -1,4 +1,4 @@
-import type { TrackRecord, TrackStatus } from './track';
+import type { TrackAvailabilityState, TrackRecord, TrackStatus } from './track';
 
 export type LibraryRootStatus = 'available' | 'missing';
 
@@ -9,6 +9,12 @@ export interface LibraryRootRecord {
   added_at: string;
   last_scanned_at: string | null;
   status: LibraryRootStatus;
+  availability_state?: TrackAvailabilityState;
+  availability_reason?: string | null;
+  recursive?: boolean;
+  enabled?: boolean;
+  last_successful_scan_at?: string | null;
+  auto_watch?: boolean;
 }
 
 export interface ImportErrorItem {
@@ -25,9 +31,26 @@ export interface ImportSummary {
   missingMarkedCount: number;
   recoveredCount: number;
   errors: ImportErrorItem[];
+  rootCount?: number;
+  excludedSkippedCount?: number;
+  duplicateSkippedCount?: number;
+  sourceUnavailableCount?: number;
+  accessErrorCount?: number;
+  relinkCandidateCount?: number;
+  newMissingIds?: string[];
+  relinkSuggestedTrackIds?: string[];
 }
 
-export type ScanPhase = 'discovering' | 'importing' | 'verifying' | 'completed';
+export type ScanPhase = 'discovering' | 'importing' | 'verifying' | 'completed' | 'canceled';
+
+export interface RelinkSingleFileResult {
+  canceled: boolean;
+  success: boolean;
+  track: TrackRecord | null;
+  conflictTrackId?: string;
+  conflictTrackTitle?: string;
+  error?: string;
+}
 
 export interface ScanProgressEvent {
   phase: ScanPhase;
@@ -56,12 +79,34 @@ export interface TrackStatusChangedEvent {
   reason?: string;
 }
 
+export type AppReleaseChannel = 'Stable' | 'Release Candidate' | 'Beta' | 'Development';
+
 export interface AppRuntimeInfo {
   appName: string;
   appVersion: string;
   electronVersion: string;
+  chromeVersion?: string;
+  nodeVersion?: string;
+  v8Version?: string;
+  arch?: string;
+  osRelease?: string;
+  sqliteVersion?: string;
+  releaseChannel?: AppReleaseChannel;
+  alacDecoderVersion?: string;
+  operatingMode?: string;
   platform: string;
   databasePath: string;
+}
+
+export interface OptionalCodecStatusReport {
+  checkedAt: string;
+  isolated: boolean;
+  bundledPackDetected: boolean;
+  ffmpegDetected: boolean;
+  ffmpegVersion: string | null;
+  readyCount: number;
+  missingCount: number;
+  summary: string;
 }
 
 export interface LibraryExclusionRecord {
@@ -81,6 +126,7 @@ export interface LibraryExclusionRecord {
 export interface WatchedFolderSummary extends LibraryRootRecord {
   exists: boolean;
   trackCount: number;
+  missingCount?: number;
 }
 
 export interface RemoveTracksResult {

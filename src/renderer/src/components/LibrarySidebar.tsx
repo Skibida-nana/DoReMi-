@@ -108,12 +108,12 @@ export function LibrarySidebar() {
         <div className="flex items-start gap-2 text-zinc-500">
           <HardDrive className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
           <div className="min-w-0 flex-1">
-            <p className="text-[11px] font-medium text-zinc-400">SQLite Local DB</p>
+            <p className="text-[11px] font-medium text-zinc-400">Thư viện cục bộ</p>
             <p
               className="mt-0.5 truncate text-[11px] text-zinc-500"
-              title={databasePath || 'Chưa kết nối Electron Main'}
+              title={databasePath || 'Chưa kết nối ứng dụng desktop'}
             >
-              {databasePath || 'Chạy trên Windows Electron để lưu library.db'}
+              {databasePath ? 'Đã sẵn sàng (Offline)' : 'Chạy trên Windows Desktop'}
             </p>
           </div>
         </div>

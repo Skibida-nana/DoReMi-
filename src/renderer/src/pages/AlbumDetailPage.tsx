@@ -1,18 +1,48 @@
-import { ArrowLeft, Heart, ListPlus, Play, Shuffle } from 'lucide-react';
+import { ArrowLeft, Play, Shuffle } from 'lucide-react';
 import { DEFAULT_DOREMI_ARTWORK_URL } from '../assets/default-artwork';
-import { PROTOTYPE_TRACKS, getAlbumById } from '../data/prototype-catalog';
+import { useLibraryState } from '../stores/library-store';
 import { uiStore, useUiState } from '../stores/ui-store';
 import { formatDurationSeconds } from '../utils/formatters';
 
 export function AlbumDetailPage() {
   const ui = useUiState();
+  const library = useLibraryState();
   const isLight = ui.preferences.themeMode === 'light';
-  const album = getAlbumById(ui.selectedAlbumId);
-  const tracks = PROTOTYPE_TRACKS.filter((t) => t.albumId === album.id).map((t) =>
-    uiStore.applySampleTrackOverrides(t),
-  );
+  const album = uiStore.getAlbumById(ui.selectedAlbumId);
+  const allTracks = uiStore.getUnifiedTracks();
+  const tracks = album ? allTracks.filter((t) => t.albumId === album.id) : [];
   const totalSec = tracks.reduce((sum, t) => sum + t.durationSec, 0);
-  const isFav = ui.favoriteIds.includes(album.id);
+
+  if (!album || tracks.length === 0) {
+    return (
+      <div data-testid="album-detail-page" className="mx-auto max-w-2xl py-20 text-center">
+        <p className="text-[15px] text-[var(--text-secondary)]">
+          Album này chưa có bài hát nào trong thư viện.
+        </p>
+        <button
+          type="button"
+          onClick={() => uiStore.openLibraryTab('albums')}
+          className="lp-btn-ghost mt-4 rounded-full px-5 py-2 text-[13px] font-medium"
+        >
+          Quay lại danh sách Album
+        </button>
+      </div>
+    );
+  }
+
+  const albumContext = {
+    contextId: `album-${album.id}`,
+    label: album.title,
+    kind: 'album' as const,
+    trackIds: tracks.filter((t) => t.status === 'available').map((t) => t.id),
+  };
+
+  const playAlbumTrack = (trackId: string) => {
+    const localRecord = library.tracks.find((r) => r.id === trackId);
+    if (localRecord) {
+      void uiStore.playLocalElectronTrack(localRecord, albumContext);
+    }
+  };
 
   return (
     <div data-testid="album-detail-page" className="mx-auto w-full max-w-[1360px] space-y-7 pb-36">
@@ -78,9 +108,7 @@ export function AlbumDetailPage() {
                 {album.artist}
               </button>
               <span className="mx-2 opacity-40">·</span>
-              <span>{album.year}</span>
-              <span className="mx-2 opacity-40">·</span>
-              <span>{tracks.length} bài hát</span>
+              <span>{album.year ? `${album.year} · ` : ''}{tracks.length} bài hát</span>
               <span className="mx-2 opacity-40">·</span>
               <span className="font-mono-tabular">{formatDurationSeconds(totalSec)}</span>
             </p>
@@ -107,22 +135,6 @@ export function AlbumDetailPage() {
                 <Shuffle className="h-4 w-4" />
                 Phát ngẫu nhiên
               </button>
-
-              <button
-                type="button"
-                onClick={() => uiStore.toggleFavorite(album.id)}
-                className="lp-btn-ghost flex h-11 w-11 items-center justify-center rounded-full text-[var(--text-primary)]"
-                aria-label="Yêu thích album"
-              >
-                <Heart
-                  className="h-4 w-4"
-                  style={
-                    isFav
-                      ? { color: album.palette.dominant, fill: album.palette.dominant }
-                      : undefined
-                  }
-                />
-              </button>
             </div>
           </div>
         </div>
@@ -132,17 +144,17 @@ export function AlbumDetailPage() {
       <section className="lp-glass-panel overflow-hidden rounded-[24px]">
         <div className="divide-y divide-[var(--border-subtle)]">
           {tracks.map((track) => {
-            const isCurrent = ui.activeSampleTrackId === track.id;
+            const isCurrent = ui.queueTrackIds[0] === track.id;
             return (
               <div
                 key={track.id}
-                onClick={() => uiStore.playSampleTrack(track.id)}
+                onClick={() => playAlbumTrack(track.id)}
                 role="button"
                 tabIndex={0}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault();
-                    uiStore.playSampleTrack(track.id);
+                    playAlbumTrack(track.id);
                   }
                 }}
                 className={`group flex h-[64px] cursor-pointer items-center gap-4 px-6 transition ${
@@ -160,24 +172,12 @@ export function AlbumDetailPage() {
                     {track.title}
                   </p>
                   <p className="truncate text-[12px] text-[var(--text-muted)]">
-                    {track.formatBadge}
-                    {track.lyrics && track.lyrics.length > 0 ? ' · Có lời đồng bộ' : ' · Không lời'}
+                    {track.artist} · {track.formatBadge}
                   </p>
                 </div>
                 <span className="font-mono-tabular text-[12.5px] text-[var(--text-muted)]">
                   {formatDurationSeconds(track.durationSec)}
                 </span>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    uiStore.playNextInQueue(track.id);
-                  }}
-                  title="Phát tiếp theo"
-                  className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--text-muted)] opacity-70 transition hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] group-hover:opacity-100"
-                >
-                  <ListPlus className="h-4 w-4" />
-                </button>
               </div>
             );
           })}

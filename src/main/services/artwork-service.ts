@@ -9,6 +9,7 @@ import {
 import type { TrackArtworkSource, TrackRecord } from '../../shared/types/track';
 import type { ArtworkRepository, TrackArtworkRow } from '../database/artwork-repository';
 import type { TrackRepository } from '../database/track-repository';
+import { buildMediaCorsHeaders, isAllowedMediaCorsOrigin } from './audio-stream-handler';
 import { readEmbeddedArtwork } from './metadata-service';
 
 const MAX_CUSTOM_ARTWORK_BYTES = 15 * 1024 * 1024; // 15 MB
@@ -202,6 +203,25 @@ export class ArtworkService {
     ]);
   }
 
+  private readDirFileSetSync(dirPath: string): Set<string> | null {
+    try {
+      return new Set(fsSync.readdirSync(dirPath));
+    } catch {
+      return null;
+    }
+  }
+
+  getArtworkDirSets(): { customFiles: Set<string> | null; cacheFiles: Set<string> | null } {
+    return {
+      customFiles: this.readDirFileSetSync(this.customDir),
+      cacheFiles: this.readDirFileSetSync(this.cacheDir),
+    };
+  }
+
+  getAllRowsMap(): Map<string, TrackArtworkRow> {
+    return this.artworkRepo.findAllMap();
+  }
+
   /**
    * Resolves artwork URLs and source strictly following M3.1 priority:
    * 1. Custom cover (userData/artwork-custom)
@@ -212,10 +232,13 @@ export class ArtworkService {
   resolveArtworkFieldsFromRow(
     trackId: string,
     row: TrackArtworkRow | null | undefined,
+    dirSets?: { customFiles: Set<string> | null; cacheFiles: Set<string> | null },
   ): ResolvedArtworkFields {
     if (row?.custom_file && row.custom_hash) {
-      const customPath = path.join(this.customDir, row.custom_file);
-      if (fsSync.existsSync(customPath)) {
+      const customExists = dirSets
+        ? Boolean(dirSets.customFiles?.has(row.custom_file))
+        : fsSync.existsSync(path.join(this.customDir, row.custom_file));
+      if (customExists) {
         return {
           artwork_url: buildTrackArtworkUrl(trackId, 'full', row.custom_hash),
           artwork_thumb_url: buildTrackArtworkUrl(trackId, 'thumb', row.custom_hash),
@@ -226,8 +249,10 @@ export class ArtworkService {
     }
 
     if (row?.embedded_cache_file && row.embedded_hash) {
-      const embeddedPath = path.join(this.cacheDir, row.embedded_cache_file);
-      if (fsSync.existsSync(embeddedPath)) {
+      const embeddedExists = dirSets
+        ? Boolean(dirSets.cacheFiles?.has(row.embedded_cache_file))
+        : fsSync.existsSync(path.join(this.cacheDir, row.embedded_cache_file));
+      if (embeddedExists) {
         return {
           artwork_url: buildTrackArtworkUrl(trackId, 'full', row.embedded_hash),
           artwork_thumb_url: buildTrackArtworkUrl(trackId, 'thumb', row.embedded_hash),
@@ -238,8 +263,10 @@ export class ArtworkService {
     }
 
     if (row?.folder_cache_file && row.folder_hash) {
-      const folderPath = path.join(this.cacheDir, row.folder_cache_file);
-      if (fsSync.existsSync(folderPath)) {
+      const folderExists = dirSets
+        ? Boolean(dirSets.cacheFiles?.has(row.folder_cache_file))
+        : fsSync.existsSync(path.join(this.cacheDir, row.folder_cache_file));
+      if (folderExists) {
         return {
           artwork_url: buildTrackArtworkUrl(trackId, 'full', row.folder_hash),
           artwork_thumb_url: buildTrackArtworkUrl(trackId, 'thumb', row.folder_hash),
@@ -267,9 +294,13 @@ export class ArtworkService {
   }
 
   enrichTracks(tracks: readonly TrackRecord[]): TrackRecord[] {
+    if (tracks.length === 0) {
+      return [];
+    }
     const rowMap = this.artworkRepo.findAllMap();
+    const dirSets = this.getArtworkDirSets();
     return tracks.map((track) => {
-      const resolved = this.resolveArtworkFieldsFromRow(track.id, rowMap.get(track.id));
+      const resolved = this.resolveArtworkFieldsFromRow(track.id, rowMap.get(track.id), dirSets);
       return {
         ...track,
         ...resolved,
@@ -281,33 +312,58 @@ export class ArtworkService {
    * Synchronizes embedded + folder artwork cache for a track in read-only mode.
    * Never modifies the source audio file or overwrites any existing custom cover.
    */
-  async syncAutoArtworkForTrack(track: TrackRecord): Promise<ResolvedArtworkFields> {
+  async syncAutoArtworkForTrack(
+    track: TrackRecord,
+    options?: {
+      existingRow?: TrackArtworkRow | null;
+      folderCoverCache?: Map<string, string | null>;
+    },
+  ): Promise<ResolvedArtworkFields> {
     await this.ensureDirectories();
-    const existingRow = this.artworkRepo.findByTrackId(track.id);
+    const existingRow =
+      options?.existingRow !== undefined
+        ? options.existingRow
+        : this.artworkRepo.findByTrackId(track.id);
 
-    let embeddedCacheFile: string | null = null;
-    let embeddedMime: string | null = null;
-    let embeddedHash: string | null = null;
+    const modifiedMatches =
+      existingRow !== null &&
+      existingRow.source_mtime_ms !== null &&
+      track.modified_at_ms !== null &&
+      existingRow.source_mtime_ms === track.modified_at_ms;
+
+    let embeddedCacheFile: string | null = modifiedMatches ? existingRow.embedded_cache_file : null;
+    let embeddedMime: string | null = modifiedMatches ? existingRow.embedded_mime : null;
+    let embeddedHash: string | null = modifiedMatches ? existingRow.embedded_hash : null;
 
     let folderSourcePath: string | null = null;
     let folderCacheFile: string | null = null;
     let folderMime: string | null = null;
     let folderHash: string | null = null;
 
-    // 1. Embedded artwork (read-only)
-    const embedded = await readEmbeddedArtwork(track.original_path);
-    if (embedded) {
-      const validated = validateImageBuffer(embedded.data);
-      if (validated) {
-        embeddedHash = sha256Hex(embedded.data);
-        embeddedMime = validated.mime;
-        embeddedCacheFile = `${embeddedHash}${validated.ext}`;
-        await this.writeContentAddressedCache(embeddedCacheFile, embedded.data, validated.mime);
+    // 1. Embedded artwork (read-only) — skip re-parsing audio tag if mtime unchanged since last auto-sync
+    if (!modifiedMatches) {
+      const embedded = await readEmbeddedArtwork(track.original_path);
+      if (embedded) {
+        const validated = validateImageBuffer(embedded.data);
+        if (validated) {
+          embeddedHash = sha256Hex(embedded.data);
+          embeddedMime = validated.mime;
+          embeddedCacheFile = `${embeddedHash}${validated.ext}`;
+          await this.writeContentAddressedCache(embeddedCacheFile, embedded.data, validated.mime);
+        }
       }
     }
 
-    // 2. Folder artwork (cover.jpg / folder.jpg ...)
-    const folderImgPath = await findFolderArtworkFile(track.original_path);
+    // 2. Folder artwork (cover.jpg / folder.jpg ...) with per-scan directory cache
+    const parentDir = path.dirname(track.original_path);
+    let folderImgPath: string | null;
+    if (options?.folderCoverCache?.has(parentDir)) {
+      folderImgPath = options.folderCoverCache.get(parentDir) ?? null;
+    } else {
+      folderImgPath = await findFolderArtworkFile(track.original_path);
+      options?.folderCoverCache?.set(parentDir, folderImgPath);
+    }
+
     if (folderImgPath) {
       try {
         const folderBytes = await fs.readFile(folderImgPath);
@@ -431,14 +487,24 @@ export class ArtworkService {
    * Handles lossless-media://artwork/<uuid>?size=full|thumb&v=<hash> securely.
    */
   async resolveArtworkHttpResponse(request: Request): Promise<Response> {
+    const originHeader = request.headers.get('origin');
+    if (!isAllowedMediaCorsOrigin(originHeader)) {
+      return new Response('Forbidden: Disallowed CORS origin.', { status: 403 });
+    }
+    const corsHeaders = buildMediaCorsHeaders(originHeader);
+
+    if (request.method === 'OPTIONS') {
+      return new Response(null, { status: 204, headers: corsHeaders });
+    }
+
     const parsed = parseArtworkRequestFromMediaUrl(request.url);
     if (!parsed) {
-      return new Response('Invalid artwork media URL.', { status: 400 });
+      return new Response('Invalid artwork media URL.', { status: 400, headers: corsHeaders });
     }
 
     const track = this.trackRepo.findById(parsed.trackId);
     if (!track) {
-      return new Response('Track not found.', { status: 404 });
+      return new Response('Track not found.', { status: 404, headers: corsHeaders });
     }
 
     let row = this.artworkRepo.findByTrackId(track.id);
@@ -449,7 +515,7 @@ export class ArtworkService {
 
     const target = this.pickEffectiveFileOnDisk(row);
     if (!target) {
-      return new Response('No artwork available for track.', { status: 404 });
+      return new Response('No artwork available for track.', { status: 404, headers: corsHeaders });
     }
 
     let filePathToServe = target.filePath;
@@ -468,6 +534,7 @@ export class ArtworkService {
       return new Response(new Uint8Array(data), {
         status: 200,
         headers: {
+          ...corsHeaders,
           'Content-Type': mimeToServe,
           'Content-Length': String(data.length),
           'Cache-Control': parsed.hasVersionToken
@@ -476,7 +543,7 @@ export class ArtworkService {
         },
       });
     } catch {
-      return new Response('Artwork file unreadable.', { status: 404 });
+      return new Response('Artwork file unreadable.', { status: 404, headers: corsHeaders });
     }
   }
 
@@ -551,5 +618,69 @@ export class ArtworkService {
       return { filePath: pngPath, mime: 'image/png' };
     }
     return null;
+  }
+
+  /**
+   * Removes unreferenced cached/custom/thumbnail files left behind after track deletions
+   * or library clears while preserving shared content-addressed album artwork used by other tracks.
+   */
+  async pruneOrphanedMediaFiles(): Promise<{ removedCount: number }> {
+    const rows = this.artworkRepo.findAllMap();
+    const activeCustom = new Set<string>();
+    const activeCache = new Set<string>();
+    const activeHashes = new Set<string>();
+
+    for (const row of rows.values()) {
+      if (row.custom_file) {
+        activeCustom.add(path.basename(row.custom_file));
+      }
+      if (row.custom_hash) {
+        activeHashes.add(row.custom_hash);
+      }
+      if (row.embedded_cache_file) {
+        activeCache.add(path.basename(row.embedded_cache_file));
+      }
+      if (row.embedded_hash) {
+        activeHashes.add(row.embedded_hash);
+      }
+      if (row.folder_cache_file) {
+        activeCache.add(path.basename(row.folder_cache_file));
+      }
+      if (row.folder_hash) {
+        activeHashes.add(row.folder_hash);
+      }
+    }
+
+    let removedCount = 0;
+
+    const cleanDir = async (dirPath: string, isKeep: (fileName: string) => boolean): Promise<void> => {
+      let entries: string[];
+      try {
+        entries = await fs.readdir(dirPath);
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        if (!isKeep(entry)) {
+          await fs
+            .unlink(path.join(dirPath, entry))
+            .then(() => {
+              removedCount += 1;
+            })
+            .catch(() => {});
+        }
+      }
+    };
+
+    await Promise.all([
+      cleanDir(this.customDir, (name) => activeCustom.has(name)),
+      cleanDir(this.cacheDir, (name) => activeCache.has(name)),
+      cleanDir(this.thumbDir, (name) => {
+        const hash = path.basename(name, path.extname(name));
+        return activeHashes.has(hash);
+      }),
+    ]);
+
+    return { removedCount };
   }
 }

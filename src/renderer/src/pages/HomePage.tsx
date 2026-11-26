@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { X } from 'lucide-react';
 import { EditorialPlaylistGallery } from '../components/EditorialPlaylistGallery';
+import { OverlayPortal } from '../components/OverlayLayer';
 import { uiStore } from '../stores/ui-store';
 
 /**
@@ -13,30 +14,31 @@ export function HomePage() {
   const [newName, setNewName] = useState('');
   const [newDesc, setNewDesc] = useState('');
 
-  const handleCreatePlaylist = () => {
+  const handleCreatePlaylist = async () => {
     const trimmed = newName.trim();
     if (!trimmed) {
       return;
     }
-    uiStore.createPlaylist(trimmed, newDesc);
+    await uiStore.createPlaylist(trimmed, newDesc, []);
     setNewName('');
     setNewDesc('');
     setShowCreateModal(false);
   };
 
   return (
-    <div className="mx-auto flex w-full max-w-[1440px] flex-col pb-28">
+    <div className="mx-auto flex w-full max-w-[1440px] flex-col pb-36">
       <EditorialPlaylistGallery
         onRequestCreatePlaylist={() => setShowCreateModal(true)}
       />
 
       {showCreateModal && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label="Tạo playlist mới"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
-        >
+        <OverlayPortal layer="modal">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Tạo playlist mới"
+            className="pointer-events-auto fixed inset-0 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+          >
           <div className="lp-glass-pill w-full max-w-md rounded-3xl p-6">
             <div className="flex items-center justify-between">
               <h2 className="font-display text-lg font-semibold text-[var(--text-primary)]">
@@ -111,6 +113,7 @@ export function HomePage() {
             </div>
           </div>
         </div>
+        </OverlayPortal>
       )}
     </div>
   );

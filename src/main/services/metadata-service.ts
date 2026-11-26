@@ -1,6 +1,8 @@
 import fs from 'node:fs/promises';
 import { parseFile } from 'music-metadata';
 import type { ParsedTrackMetadata } from '../../shared/types/track';
+import { resolveMp4AudioMetadataOverride } from '../../shared/utils/audio-codec';
+import { extractFileNameFromPath } from '../../shared/utils/natural-sort';
 import { extractReplayGainFromMetadata } from '../../shared/utils/replaygain';
 import { detectMp4AudioCodec } from './alac-decoder';
 import { extractFallbackTitle, extractFileExtension } from './path-utils';
@@ -149,9 +151,29 @@ export async function readTrackMetadata(filePath: string): Promise<ParsedTrackMe
     const artist =
       cleanOptionalText(metadata.common.artist) ??
       cleanOptionalText(metadata.common.artists?.[0]) ??
+      cleanOptionalText(metadata.common.albumartist) ??
       'Unknown Artist';
     const album = cleanOptionalText(metadata.common.album);
+    const genre = cleanOptionalText(metadata.common.genre?.filter(Boolean).join(', '));
     const year = toNullableYear(metadata.common.year, metadata.common.date);
+    const albumArtist = cleanOptionalText(metadata.common.albumartist);
+    const trackNumber = toNullablePositiveInt(metadata.common.track?.no ?? undefined);
+    const trackTotal = toNullablePositiveInt(metadata.common.track?.of ?? undefined);
+    const discNumber = toNullablePositiveInt(metadata.common.disk?.no ?? undefined);
+    const discTotal = toNullablePositiveInt(metadata.common.disk?.of ?? undefined);
+    const composer = cleanOptionalText(metadata.common.composer?.filter(Boolean).join(', '));
+    const lyricist = cleanOptionalText(metadata.common.lyricist?.filter(Boolean).join(', '));
+    const comment = cleanOptionalText(
+      metadata.common.comment
+        ?.map((entry) => (typeof entry === 'string' ? entry : entry?.text))
+        .filter((s): s is string => typeof s === 'string' && s.trim().length > 0)
+        .join('\n'),
+    );
+    const channels = toNullablePositiveInt(metadata.format.numberOfChannels);
+    const encoder = cleanOptionalText(
+      metadata.common.encodedby ?? metadata.common.encodersettings ?? metadata.format.codecProfile,
+    );
+    const fileName = extractFileNameFromPath(filePath);
     const embeddedLyrics = normalizeEmbeddedLyrics(metadata.common.lyrics);
 
     let codec = cleanOptionalText(metadata.format.codec);
@@ -159,40 +181,47 @@ export async function readTrackMetadata(filePath: string): Promise<ParsedTrackMe
     const durationMs = toNullableDurationMs(metadata.format.duration);
     let sampleRateHz = toNullablePositiveInt(metadata.format.sampleRate);
     let bitDepth = toNullablePositiveInt(metadata.format.bitsPerSample);
+    let resolvedChannels = channels;
     const bitrateBps = toNullablePositiveInt(metadata.format.bitrate);
     const rg = extractReplayGainFromMetadata(metadata);
 
     // For M4A/MP4 containers, inspect real ISO-BMFF `stsd` boxes so ALAC (Lossless, including
     // >65.5kHz high-res sample rates that overflow MP4 16.16 stsd fields) and AAC (Lossy, no
-    // PCM bit depth) are always classified accurately without guessing from file extension.
+    // PCM bit depth) are resolved from authoritative ALACSpecificConfig via the shared helper.
     if (ext === '.m4a' || ext === '.mp4') {
       const mp4Probe = await detectMp4AudioCodec(filePath);
-      if (mp4Probe.codec === 'alac') {
-        codec = 'ALAC';
-        container = 'M4A';
-        if (!sampleRateHz && mp4Probe.sampleRateHz) {
-          sampleRateHz = mp4Probe.sampleRateHz;
-        }
-        if (!bitDepth && mp4Probe.bitDepth) {
-          bitDepth = mp4Probe.bitDepth;
-        }
-      } else if (mp4Probe.codec === 'aac') {
-        codec = 'AAC';
-        container = 'M4A';
-        // Lossy AAC does not have a PCM bit depth (music-metadata reports container default 16)
-        bitDepth = null;
-      } else if (codec && /AAC|MP4A/i.test(codec)) {
-        codec = 'AAC';
-        container = 'M4A';
-        bitDepth = null;
-      }
+      const resolved = resolveMp4AudioMetadataOverride({
+        mp4Probe,
+        parsedCodec: codec,
+        parsedContainer: container,
+        parsedSampleRateHz: sampleRateHz,
+        parsedBitDepth: bitDepth,
+        parsedChannels: channels,
+      });
+      codec = resolved.codec;
+      container = resolved.container;
+      sampleRateHz = resolved.sampleRateHz;
+      bitDepth = resolved.bitDepth;
+      resolvedChannels = resolved.channels;
     }
 
     return {
       title,
       artist,
       album,
+      genre,
       year,
+      album_artist: albumArtist,
+      track_number: trackNumber,
+      track_total: trackTotal,
+      disc_number: discNumber,
+      disc_total: discTotal,
+      composer,
+      lyricist,
+      comment,
+      channels: resolvedChannels,
+      encoder,
+      file_name: fileName,
       embedded_lyrics: embeddedLyrics,
       duration_ms: durationMs,
       codec,

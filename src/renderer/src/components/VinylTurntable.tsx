@@ -1,10 +1,23 @@
-import { memo, useCallback, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
 import { DEFAULT_DOREMI_ARTWORK_URL } from '../assets/default-artwork';
 import type { VinylSwapPhase } from '../stores/ui-store';
 import {
+  beginCircularDrag,
   clampUnit,
+  computeAdaptiveFocusArcGeometry,
+  computeAdaptiveHitStrokeWidth,
   computeCircularProgressArc,
-  pointerToCircularRatio,
+  pointerToSvgAdaptiveArcRatio,
+  pointerToSvgCircularRatio,
+  stepCircularDrag,
+  type CircularDragState,
 } from '../utils/circular-progress';
 import { formatDurationSeconds } from '../utils/formatters';
 import {
@@ -40,11 +53,23 @@ interface VinylTurntableProps {
   storyboardFrame?: StoryboardFrameNumber;
   vinylAnimationEnabled?: boolean;
   reducedMotion?: boolean;
-  /** Concentric interactive thin circular progress ring */
+  /** Concentric interactive progress presentation ('circle' in Now Playing, 'arc' in Focus Vinyl) */
   showProgressRing?: boolean;
+  progressPresentation?: 'circle' | 'arc';
   progressPct?: number;
   currentTimeSec?: number;
   durationSec?: number;
+  /** Applied stage transform scale (allows uniform screen-space hit-band & hairline stroke width) */
+  stageScale?: number;
+  /** Focus Adaptive Arc screen radius (px) & viewport vinyl center (px) for clipping math */
+  focusArcRadiusPx?: number;
+  focusArcViewportCenter?: { x: number; y: number };
+  viewportHeight?: number;
+  progressTransitionMs?: number;
+  /** Phase 4.3C: True during the single paint frame immediately following foreground resume */
+  suppressResumeTransitions?: boolean;
+  /** Resets active circular drag safely when active track or display mode switches */
+  seekResetKey?: string;
   onSeek?: (timeSec: number) => void;
 }
 
@@ -103,13 +128,24 @@ export const VinylTurntable = memo(function VinylTurntable({
   vinylAnimationEnabled = true,
   reducedMotion = false,
   showProgressRing = false,
+  progressPresentation = 'circle',
   progressPct = 0,
   currentTimeSec = 0,
   durationSec = 0,
+  stageScale = 1,
+  focusArcRadiusPx,
+  focusArcViewportCenter,
+  viewportHeight = 768,
+  progressTransitionMs = 500,
+  suppressResumeTransitions = false,
+  seekResetKey = '',
   onSeek,
 }: VinylTurntableProps) {
   const effectivePhase = normalizePhase(swapPhase, storyboardFrame);
   const ringSvgRef = useRef<SVGSVGElement | null>(null);
+  const arcSvgRef = useRef<SVGSVGElement | null>(null);
+  const dragStateRef = useRef<CircularDragState | null>(null);
+  const arcDraggingRef = useRef(false);
   const [isDraggingRing, setIsDraggingRing] = useState(false);
   const [dragPreviewRatio, setDragPreviewRatio] = useState<number | null>(null);
 
@@ -204,64 +240,202 @@ export const VinylTurntable = memo(function VinylTurntable({
   });
   const tonearmLiftScale = isTonearmSwappingOff ? 1.028 : isPlaying || storyboardFrame ? 1 : 1.012;
 
+  const safeStageScale = Number.isFinite(stageScale) && stageScale > 0.25 ? stageScale : 1;
+  const isArcPresentation = progressPresentation === 'arc';
+  const focusArcRadiusSvg = focusArcRadiusPx
+    ? focusArcRadiusPx / safeStageScale
+    : ringRadius;
+  const adaptiveArc = computeAdaptiveFocusArcGeometry({
+    centerXSvg: ringCenter,
+    centerYSvg: ringCenter,
+    radiusSvg: focusArcRadiusSvg,
+    centerViewportX: focusArcViewportCenter?.x ?? 70,
+    centerViewportY: focusArcViewportCenter?.y ?? viewportHeight * 0.5,
+    arcRadiusPx: focusArcRadiusPx ?? ringRadius * safeStageScale,
+    viewportHeight,
+    progressRatio: effectiveRatio,
+  });
+
+  const adaptiveHitStrokeWidth = computeAdaptiveHitStrokeWidth(safeStageScale);
+  const adaptiveTrackStrokeWidth = Math.max(1.3, 2 / Math.sqrt(safeStageScale));
+  const adaptiveActiveStrokeWidth = isDraggingRing
+    ? Math.max(2.2, 3.2 / Math.sqrt(safeStageScale))
+    : Math.max(1.7, 2.6 / Math.sqrt(safeStageScale));
+  const adaptiveHandleRadius = isDraggingRing
+    ? Math.max(4.4, 6.8 / Math.sqrt(safeStageScale))
+    : Math.max(3.6, 5.2 / Math.sqrt(safeStageScale));
+
+  const clearRingDrag = useCallback(() => {
+    dragStateRef.current = null;
+    arcDraggingRef.current = false;
+    setIsDraggingRing(false);
+    setDragPreviewRatio(null);
+  }, []);
+
+  // Safely cancel dragging when switching tracks, switching Standard<->Focus, or losing focus
+  useEffect(() => {
+    clearRingDrag();
+  }, [seekResetKey, durationSec, clearRingDrag]);
+
+  useEffect(() => {
+    if (!isDraggingRing) return;
+    const onBlur = () => clearRingDrag();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        clearRingDrag();
+      }
+    };
+    window.addEventListener('blur', onBlur);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('blur', onBlur);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [isDraggingRing, clearRingDrag]);
+
   const computeRatioFromPointerEvent = useCallback(
     (event: ReactPointerEvent<SVGElement>): number | null => {
-      const svg = ringSvgRef.current;
-      if (!svg) return null;
-      const rect = svg.getBoundingClientRect();
-      const centerX = rect.left + rect.width / 2;
-      const centerY = rect.top + rect.height / 2;
-      return pointerToCircularRatio(event.clientX, event.clientY, centerX, centerY);
+      return pointerToSvgCircularRatio(
+        ringSvgRef.current,
+        event.clientX,
+        event.clientY,
+        ringCenter,
+        ringCenter,
+      );
     },
-    [],
+    [ringCenter],
+  );
+
+  const computeArcRatioFromPointerEvent = useCallback(
+    (event: ReactPointerEvent<SVGElement>): number | null => {
+      return pointerToSvgAdaptiveArcRatio(
+        arcSvgRef.current,
+        event.clientX,
+        event.clientY,
+        ringCenter,
+        ringCenter,
+        adaptiveArc.startAngleDeg,
+        adaptiveArc.endAngleDeg,
+      );
+    },
+    [ringCenter, adaptiveArc.startAngleDeg, adaptiveArc.endAngleDeg],
   );
 
   const handleRingPointerDown = (event: ReactPointerEvent<SVGCircleElement>) => {
+    if (isArcPresentation) return;
+    if (event.button !== 0 && event.pointerType === 'mouse') return;
     if (!onSeek || durationSec <= 0) return;
     event.preventDefault();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    const ratio = computeRatioFromPointerEvent(event);
+    event.stopPropagation();
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // Synthetic pointer events in test environments may not register real pointer IDs
+    }
+    const rawRatio = computeRatioFromPointerEvent(event);
+    if (rawRatio !== null) {
+      const nextDrag = beginCircularDrag(rawRatio);
+      dragStateRef.current = nextDrag;
+      setIsDraggingRing(true);
+      setDragPreviewRatio(nextDrag.clampedRatio);
+      onSeek(nextDrag.clampedRatio * durationSec);
+    }
+  };
+
+  const handleRingPointerMove = (event: ReactPointerEvent<SVGCircleElement>) => {
+    if (isArcPresentation || !dragStateRef.current || !onSeek || durationSec <= 0) return;
+    const rawRatio = computeRatioFromPointerEvent(event);
+    if (rawRatio !== null) {
+      const nextDrag = stepCircularDrag(dragStateRef.current, rawRatio);
+      dragStateRef.current = nextDrag;
+      setDragPreviewRatio(nextDrag.clampedRatio);
+      onSeek(nextDrag.clampedRatio * durationSec);
+    }
+  };
+
+  const handleRingPointerUp = (event: ReactPointerEvent<SVGCircleElement>) => {
+    if (!dragStateRef.current) return;
+    try {
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+    } catch {
+      // Ignore synthetic cleanup error
+    }
+    clearRingDrag();
+  };
+
+  const handleArcPointerDown = (event: ReactPointerEvent<SVGPathElement>) => {
+    if (!isArcPresentation) return;
+    if (event.button !== 0 && event.pointerType === 'mouse') return;
+    if (!onSeek || durationSec <= 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // Ignore synthetic capture error
+    }
+    const ratio = computeArcRatioFromPointerEvent(event);
     if (ratio !== null) {
+      arcDraggingRef.current = true;
       setIsDraggingRing(true);
       setDragPreviewRatio(ratio);
       onSeek(ratio * durationSec);
     }
   };
 
-  const handleRingPointerMove = (event: ReactPointerEvent<SVGCircleElement>) => {
-    if (!isDraggingRing || !onSeek || durationSec <= 0) return;
-    const ratio = computeRatioFromPointerEvent(event);
+  const handleArcPointerMove = (event: ReactPointerEvent<SVGPathElement>) => {
+    if (!isArcPresentation || !arcDraggingRef.current || !onSeek || durationSec <= 0) return;
+    const ratio = computeArcRatioFromPointerEvent(event);
     if (ratio !== null) {
       setDragPreviewRatio(ratio);
       onSeek(ratio * durationSec);
     }
   };
 
-  const handleRingPointerUp = (event: ReactPointerEvent<SVGCircleElement>) => {
-    if (!isDraggingRing) return;
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
+  const handleArcPointerUp = (event: ReactPointerEvent<SVGPathElement>) => {
+    if (!arcDraggingRef.current) return;
+    try {
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+    } catch {
+      // Ignore synthetic cleanup error
     }
-    setIsDraggingRing(false);
-    setDragPreviewRatio(null);
+    clearRingDrag();
   };
 
   const previewTimeSec =
     dragPreviewRatio !== null && durationSec > 0 ? dragPreviewRatio * durationSec : currentTimeSec;
+  const activeHandleX = isArcPresentation ? adaptiveArc.handleXSvg : arc.handleX;
+  const activeHandleY = isArcPresentation ? adaptiveArc.handleYSvg : arc.handleY;
+  const focusTooltipX = Math.max(
+    ringCenter + (isArcPresentation ? focusArcRadiusSvg * 0.16 : ringRadius * 0.14),
+    Math.min(ringCanvasSize - 72, activeHandleX + (isArcPresentation ? 24 / safeStageScale : 0)),
+  );
+  const focusTooltipY = Math.max(56, Math.min(ringCanvasSize - 42, activeHandleY - 22 / safeStageScale));
+  const progressFadeCss =
+    !suppressResumeTransitions && !reducedMotion && progressTransitionMs > 0
+      ? `opacity ${Math.round(progressTransitionMs * 0.65)}ms cubic-bezier(0.22, 1, 0.36, 1)`
+      : 'none';
+  const progressGeometryTransition = (cssProp: string) =>
+    suppressResumeTransitions || isDraggingRing ? 'none' : cssProp;
 
   return (
     <div
       data-testid="vinyl-turntable"
       data-phase={effectivePhase}
       data-playing={shouldSpin ? 'true' : 'false'}
+      data-progress-presentation={progressPresentation}
+      data-actual-disc-diameter={String(Math.round(discDiameter * safeStageScale))}
       data-tonearm-angle={tonearm.angleDeg.toFixed(1)}
       data-needle-on-grooves={tonearm.isNeedleOnGrooves ? 'true' : 'false'}
       data-needle-radius={String(Math.round(tonearm.needleRadiusFromCenter))}
-      className="relative flex shrink-0 select-none items-center justify-start"
+      className="lp-resume-snap-target relative flex shrink-0 select-none items-center justify-start"
       style={{
         width: `${stageWidth}px`,
         height: `${stageHeight}px`,
-        transition: reducedMotion ? 'none' : 'width 360ms cubic-bezier(0.22, 1, 0.36, 1), height 360ms cubic-bezier(0.22, 1, 0.36, 1)',
       }}
       aria-label={`Mâm đĩa than: ${albumTitle}`}
     >
@@ -288,7 +462,7 @@ export const VinylTurntable = memo(function VinylTurntable({
         className="relative flex shrink-0 items-center justify-center"
         style={{ width: `${ringCanvasSize}px`, height: `${ringCanvasSize}px` }}
       >
-        {/* Layer 0: Delicate Thin Concentric Circular Progress Ring (2.4px stroke, round cap, crisp indicator) */}
+        {/* Layer 0A: Standard Now Playing 360-deg Concentric Circular Progress Ring */}
         {showProgressRing && (
           <svg
             ref={ringSvgRef}
@@ -296,8 +470,13 @@ export const VinylTurntable = memo(function VinylTurntable({
             viewBox={`0 0 ${ringCanvasSize} ${ringCanvasSize}`}
             width={ringCanvasSize}
             height={ringCanvasSize}
-            className="pointer-events-none absolute inset-0 z-15 overflow-visible"
-            aria-hidden="false"
+            className="pointer-events-none absolute inset-0 overflow-visible"
+            style={{
+              zIndex: 24,
+              opacity: isArcPresentation ? 0 : 1,
+              transition: progressFadeCss,
+            }}
+            aria-hidden={isArcPresentation}
             role="slider"
             aria-label="Vòng tiến độ phát nhạc"
             aria-valuemin={0}
@@ -312,7 +491,7 @@ export const VinylTurntable = memo(function VinylTurntable({
               r={ringRadius}
               fill="none"
               stroke="var(--np-ring-track)"
-              strokeWidth="1.8"
+              strokeWidth={adaptiveTrackStrokeWidth}
             />
 
             {/* Effective Now Playing Accent Active Progress Arc (12 o'clock clockwise) */}
@@ -323,13 +502,13 @@ export const VinylTurntable = memo(function VinylTurntable({
               r={ringRadius}
               fill="none"
               stroke={accentColor}
-              strokeWidth={isDraggingRing ? '3.2' : '2.4'}
+              strokeWidth={adaptiveActiveStrokeWidth}
               strokeLinecap="round"
               strokeDasharray={arc.circumference}
               strokeDashoffset={arc.dashOffset}
               transform={`rotate(-90 ${ringCenter} ${ringCenter})`}
               style={{
-                transition: isDraggingRing ? 'none' : 'stroke-dashoffset 180ms linear',
+                transition: progressGeometryTransition('stroke-dashoffset 180ms linear'),
               }}
             />
 
@@ -338,16 +517,16 @@ export const VinylTurntable = memo(function VinylTurntable({
               data-testid="vinyl-circular-progress-handle"
               cx={arc.handleX}
               cy={arc.handleY}
-              r={isDraggingRing ? 6.8 : 5.2}
+              r={adaptiveHandleRadius}
               fill={isLight ? '#F5F5F3' : '#101114'}
               stroke={isLight ? '#222326' : accentColor}
-              strokeWidth="2.2"
+              strokeWidth={Math.max(1.5, 2.2 / Math.sqrt(safeStageScale))}
               style={{
-                transition: isDraggingRing ? 'none' : 'cx 180ms linear, cy 180ms linear',
+                transition: progressGeometryTransition('cx 180ms linear, cy 180ms linear'),
               }}
             />
 
-            {/* Generous Invisible Hit Ring for Effortless Click & Drag Seeking */}
+            {/* Generous Uniform Screen-Space Invisible Hit Ring (enabled strictly in Standard mode) */}
             {onSeek && durationSec > 0 && (
               <circle
                 data-testid="vinyl-circular-progress-hit"
@@ -355,23 +534,121 @@ export const VinylTurntable = memo(function VinylTurntable({
                 cy={ringCenter}
                 r={ringRadius}
                 fill="none"
-                stroke="transparent"
-                strokeWidth="24"
-                className="pointer-events-auto cursor-pointer"
+                stroke="rgba(255,255,255,0.001)"
+                strokeWidth={adaptiveHitStrokeWidth}
+                style={{
+                  pointerEvents: isArcPresentation ? 'none' : 'stroke',
+                  cursor: isDraggingRing ? 'grabbing' : 'pointer',
+                }}
                 onPointerDown={handleRingPointerDown}
                 onPointerMove={handleRingPointerMove}
                 onPointerUp={handleRingPointerUp}
                 onPointerCancel={handleRingPointerUp}
+                onLostPointerCapture={clearRingDrag}
               />
             )}
           </svg>
         )}
 
-        {/* Dragging Timestamp Readout Badge */}
+        {/* Layer 0B: Focus Vinyl Adaptive Progress Arc (maps full 0..100% duration strictly along visible right curve) */}
+        {showProgressRing && (
+          <svg
+            ref={arcSvgRef}
+            data-testid="vinyl-adaptive-progress"
+            data-arc-start-deg={adaptiveArc.startAngleDeg.toFixed(1)}
+            data-arc-end-deg={adaptiveArc.endAngleDeg.toFixed(1)}
+            data-arc-sweep-deg={adaptiveArc.sweepAngleDeg.toFixed(1)}
+            viewBox={`0 0 ${ringCanvasSize} ${ringCanvasSize}`}
+            width={ringCanvasSize}
+            height={ringCanvasSize}
+            className="pointer-events-none absolute inset-0 overflow-visible"
+            style={{
+              zIndex: 31,
+              opacity: isArcPresentation ? 1 : 0,
+              transition: progressFadeCss,
+            }}
+            aria-hidden={!isArcPresentation}
+            role="slider"
+            aria-label="Cung tiến độ Focus Vinyl (0% đến 100%)"
+            aria-valuemin={0}
+            aria-valuemax={Math.round(durationSec)}
+            aria-valuenow={Math.round(previewTimeSec)}
+          >
+            <path
+              data-testid="vinyl-adaptive-progress-track"
+              d={adaptiveArc.trackPathD}
+              fill="none"
+              stroke="var(--np-ring-track)"
+              strokeWidth={adaptiveTrackStrokeWidth}
+              strokeLinecap="round"
+            />
+
+            <path
+              data-testid="vinyl-adaptive-progress-arc"
+              d={adaptiveArc.trackPathD}
+              fill="none"
+              stroke={accentColor}
+              strokeWidth={adaptiveActiveStrokeWidth}
+              strokeLinecap="round"
+              strokeDasharray={adaptiveArc.arcLengthSvg}
+              strokeDashoffset={adaptiveArc.dashOffsetSvg}
+              style={{
+                transition: progressGeometryTransition('stroke-dashoffset 180ms linear'),
+              }}
+            />
+
+            <circle
+              data-testid="vinyl-adaptive-progress-handle"
+              cx={adaptiveArc.handleXSvg}
+              cy={adaptiveArc.handleYSvg}
+              r={adaptiveHandleRadius}
+              fill={isLight ? '#F5F5F3' : '#101114'}
+              stroke={isLight ? '#222326' : accentColor}
+              strokeWidth={Math.max(1.5, 2.2 / Math.sqrt(safeStageScale))}
+              style={{
+                transition: progressGeometryTransition('cx 180ms linear, cy 180ms linear'),
+              }}
+            />
+
+            {onSeek && durationSec > 0 && (
+              <path
+                data-testid="vinyl-adaptive-progress-hit"
+                d={adaptiveArc.trackPathD}
+                fill="none"
+                stroke="rgba(255,255,255,0.001)"
+                strokeWidth={adaptiveHitStrokeWidth}
+                strokeLinecap="round"
+                style={{
+                  pointerEvents: isArcPresentation ? 'stroke' : 'none',
+                  cursor: isDraggingRing ? 'grabbing' : 'pointer',
+                }}
+                onPointerDown={handleArcPointerDown}
+                onPointerMove={handleArcPointerMove}
+                onPointerUp={handleArcPointerUp}
+                onPointerCancel={handleArcPointerUp}
+                onLostPointerCapture={clearRingDrag}
+              />
+            )}
+          </svg>
+        )}
+
+        {/* Dragging Timestamp Readout Badge (stays safely visible in both Standard & Focus modes) */}
         {showProgressRing && isDraggingRing && (
           <div
             data-testid="vinyl-circular-seek-tooltip"
-            className="lp-glass-pill font-mono-tabular pointer-events-none absolute top-2 left-1/2 z-30 -translate-x-1/2 rounded-full px-3 py-1 text-[11.5px] font-semibold text-[var(--text-primary)]"
+            className="lp-glass-pill font-mono-tabular pointer-events-none absolute z-35 -translate-x-1/2 rounded-full px-3 py-1 text-[11.5px] font-semibold text-[var(--text-primary)]"
+            style={
+              safeStageScale > 1.15 || isArcPresentation
+                ? {
+                    left: `${Math.round(focusTooltipX)}px`,
+                    top: `${Math.round(focusTooltipY)}px`,
+                    transform: `translate3d(-50%, -50%, 0) scale(${(1 / safeStageScale).toFixed(3)})`,
+                  }
+                : {
+                    left: '50%',
+                    top: '8px',
+                  }
+            }
           >
             {formatDurationSeconds(previewTimeSec)} / {formatDurationSeconds(durationSec)}
           </div>
@@ -473,7 +750,9 @@ export const VinylTurntable = memo(function VinylTurntable({
               className="lp-vinyl-rotor relative flex h-full w-full items-center justify-center rounded-full"
               style={{
                 animationPlayState: shouldSpin ? 'running' : 'paused',
-                willChange: shouldSpin ? 'transform' : 'auto',
+                // Keep compositor promotion stable across pause/hidden toggles so Chromium
+                // never drops & re-uploads the high-res rotor GPU layer right on foreground resume
+                willChange: vinylAnimationEnabled && !reducedMotion ? 'transform' : 'auto',
                 background: isLight
                   ? `radial-gradient(circle at center,
                       #EAEAE7 0%,
@@ -639,7 +918,8 @@ export const VinylTurntable = memo(function VinylTurntable({
         data-testid="vinyl-tonearm"
         aria-hidden="true"
         viewBox={`0 0 ${VINYL_VIEWBOX_WIDTH} ${VINYL_VIEWBOX_HEIGHT}`}
-        className="pointer-events-none absolute inset-0 z-25 h-full w-full overflow-visible"
+        className="pointer-events-none absolute inset-0 h-full w-full overflow-visible"
+        style={{ zIndex: 28 }}
       >
         <defs>
           <linearGradient id="doremiArmShaftDark" x1="0%" y1="0%" x2="100%" y2="0%">
@@ -666,19 +946,19 @@ export const VinylTurntable = memo(function VinylTurntable({
           </radialGradient>
         </defs>
 
-        {/* Stationary Gimbal Mounting Plate at Upper-Right Pivot (1005, 158) */}
+        {/* Stationary Gimbal Mounting Plate at Top-Entering Pivot (768, 24) */}
         <g>
           {/* Soft ambient shadow disc beneath mounting plate */}
           <circle
-            cx={TONEARM_PIVOT_X + 4}
-            cy={TONEARM_PIVOT_Y + 9}
-            r="63"
+            cx={TONEARM_PIVOT_X + 3}
+            cy={TONEARM_PIVOT_Y + 8}
+            r="56"
             fill={isLight ? 'rgba(20,22,28,0.12)' : 'rgba(0,0,0,0.48)'}
           />
           <circle
             cx={TONEARM_PIVOT_X}
             cy={TONEARM_PIVOT_Y}
-            r="60"
+            r="54"
             fill={isLight ? 'url(#doremiPivotBaseLight)' : 'url(#doremiPivotBaseDark)'}
             stroke={isLight ? 'rgba(34,35,38,0.16)' : 'rgba(255,255,255,0.16)'}
             strokeWidth="2.2"
@@ -686,89 +966,101 @@ export const VinylTurntable = memo(function VinylTurntable({
           <circle
             cx={TONEARM_PIVOT_X}
             cy={TONEARM_PIVOT_Y}
-            r="42"
+            r="38"
             fill={isLight ? '#24272E' : '#151820'}
             stroke={isLight ? 'rgba(255,255,255,0.28)' : 'rgba(193,161,124,0.44)'}
             strokeWidth="2"
           />
           {/* Subtle anti-skate knob */}
           <circle
-            cx={TONEARM_PIVOT_X + 46}
-            cy={TONEARM_PIVOT_Y - 30}
-            r="10"
+            cx={TONEARM_PIVOT_X + 42}
+            cy={TONEARM_PIVOT_Y - 26}
+            r="9"
             fill={isLight ? '#383C45' : '#232732'}
             stroke={isLight ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.2)'}
             strokeWidth="1.6"
           />
         </g>
 
-        {/* Articulated Rotating Arm Assembly Pivoting Strictly Around (1005, 158) */}
+        {/* Articulated Rotating Arm Assembly Pivoting Strictly Around (768, 24) */}
         <g
           data-testid="vinyl-tonearm-assembly"
           style={{
             transformOrigin: `${TONEARM_PIVOT_X}px ${TONEARM_PIVOT_Y}px`,
             transform: `rotate(${tonearm.angleDeg}deg) scale(${tonearmLiftScale})`,
-            transition: reducedMotion
-              ? 'none'
-              : 'transform 280ms cubic-bezier(0.22, 1, 0.36, 1)',
+            transition:
+              suppressResumeTransitions || reducedMotion
+                ? 'none'
+                : 'transform 280ms cubic-bezier(0.22, 1, 0.36, 1)',
           }}
         >
           {/* Rear Counterweight Cylinder above Pivot */}
           <rect
-            x={TONEARM_PIVOT_X - 20}
-            y={TONEARM_PIVOT_Y - 90}
-            width="40"
-            height="46"
+            x={TONEARM_PIVOT_X - 18}
+            y={TONEARM_PIVOT_Y - 82}
+            width="36"
+            height="42"
             rx="9"
             fill={isLight ? '#2D3038' : '#262A34'}
             stroke={isLight ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.2)'}
             strokeWidth="1.8"
           />
           <line
-            x1={TONEARM_PIVOT_X - 16}
-            y1={TONEARM_PIVOT_Y - 78}
-            x2={TONEARM_PIVOT_X + 16}
-            y2={TONEARM_PIVOT_Y - 78}
+            x1={TONEARM_PIVOT_X - 14}
+            y1={TONEARM_PIVOT_Y - 70}
+            x2={TONEARM_PIVOT_X + 14}
+            y2={TONEARM_PIVOT_Y - 70}
             stroke={isLight ? 'rgba(220,224,232,0.7)' : 'rgba(193,161,124,0.65)'}
             strokeWidth="2.4"
           />
 
           {/* Gimbal Yoke Bridge */}
           <rect
-            x={TONEARM_PIVOT_X - 22}
-            y={TONEARM_PIVOT_Y - 22}
-            width="44"
-            height="44"
-            rx="11"
+            x={TONEARM_PIVOT_X - 20}
+            y={TONEARM_PIVOT_Y - 20}
+            width="40"
+            height="40"
+            rx="10"
             fill={isLight ? '#323640' : '#2A2F3B'}
             stroke={isLight ? 'rgba(255,255,255,0.26)' : 'rgba(255,255,255,0.2)'}
             strokeWidth="1.8"
           />
 
-          {/* Precision S-Curve Metallic Tonearm Shaft reaching directly onto Playable Grooves */}
+          {/* Soft Platter Cast Shadow under Tonearm Shaft & Headshell */}
+          <path
+            d={`M ${TONEARM_PIVOT_X + 12} ${TONEARM_PIVOT_Y + 18}
+                C ${TONEARM_PIVOT_X + 24} ${TONEARM_PIVOT_Y + 215},
+                  ${TONEARM_PIVOT_X + 94} ${TONEARM_PIVOT_Y + 388},
+                  ${TONEARM_PIVOT_X + 68} ${TONEARM_PIVOT_Y + 536}
+                L 820 618`}
+            fill="none"
+            stroke={isLight ? 'rgba(20,22,28,0.14)' : 'rgba(0,0,0,0.46)'}
+            strokeWidth="22"
+            strokeLinecap="round"
+          />
+
+          {/* Top-Entering Precision S-Curve Metallic Tonearm Shaft reaching directly onto Playable Grooves */}
           <path
             d={`M ${TONEARM_PIVOT_X} ${TONEARM_PIVOT_Y}
-                L ${TONEARM_PIVOT_X - 16} ${TONEARM_PIVOT_Y + 230}
-                C ${TONEARM_PIVOT_X - 26} ${TONEARM_PIVOT_Y + 320},
-                  ${TONEARM_PIVOT_X - 74} ${TONEARM_PIVOT_Y + 382},
-                  ${TONEARM_PIVOT_X - 142} ${TONEARM_PIVOT_Y + 438}
-                L 838 616`}
+                C ${TONEARM_PIVOT_X + 12} ${TONEARM_PIVOT_Y + 195},
+                  ${TONEARM_PIVOT_X + 82} ${TONEARM_PIVOT_Y + 368},
+                  ${TONEARM_PIVOT_X + 56} ${TONEARM_PIVOT_Y + 516}
+                L 808 595`}
             fill="none"
             stroke={isLight ? 'url(#doremiArmShaftLight)' : 'url(#doremiArmShaftDark)'}
-            strokeWidth="13.5"
+            strokeWidth="16"
             strokeLinecap="round"
           />
           {/* Crisp Specular Highlight along Arm Tube */}
           <path
-            d={`M ${TONEARM_PIVOT_X - 3} ${TONEARM_PIVOT_Y + 14}
-                L ${TONEARM_PIVOT_X - 19} ${TONEARM_PIVOT_Y + 230}
-                C ${TONEARM_PIVOT_X - 29} ${TONEARM_PIVOT_Y + 316},
-                  ${TONEARM_PIVOT_X - 76} ${TONEARM_PIVOT_Y + 378},
-                  ${TONEARM_PIVOT_X - 144} ${TONEARM_PIVOT_Y + 434}
-                L 836 612`}
+            d={`M ${TONEARM_PIVOT_X - 3.5} ${TONEARM_PIVOT_Y + 14}
+                C ${TONEARM_PIVOT_X + 9} ${TONEARM_PIVOT_Y + 195},
+                  ${TONEARM_PIVOT_X + 79} ${TONEARM_PIVOT_Y + 366},
+                  ${TONEARM_PIVOT_X + 53} ${TONEARM_PIVOT_Y + 512}
+                L 805.5 591`}
             fill="none"
-            stroke="rgba(255,255,255,0.42)"
-            strokeWidth="2.4"
+            stroke="rgba(255,255,255,0.48)"
+            strokeWidth="3.2"
             strokeLinecap="round"
           />
 
@@ -776,17 +1068,17 @@ export const VinylTurntable = memo(function VinylTurntable({
           <circle
             cx={TONEARM_PIVOT_X}
             cy={TONEARM_PIVOT_Y}
-            r="16"
+            r="15"
             fill={isLight ? 'url(#doremiArmShaftLight)' : 'url(#doremiArmShaftDark)'}
           />
-          <circle cx={TONEARM_PIVOT_X} cy={TONEARM_PIVOT_Y} r="6.5" fill="#12141A" />
+          <circle cx={TONEARM_PIVOT_X} cy={TONEARM_PIVOT_Y} r="6" fill="#12141A" />
 
           {/*
             Angled Headshell, Cartridge & Stylus Tip:
-            Group translated to (838, 616) and rotated +39deg so the stylus tip
-            at local (0, 44) lands EXACTLY at (810, 650) = TONEARM_BASE_NEEDLE_X/Y!
+            Group translated to (808, 595) and rotated +20deg so the stylus tip
+            at local (0, 44) lands EXACTLY at (793, 636) = TONEARM_BASE_NEEDLE_X/Y!
           */}
-          <g transform="translate(838, 616) rotate(39)">
+          <g transform="translate(808, 595) rotate(20)">
             {/* Locking Collar */}
             <rect
               x="-8"

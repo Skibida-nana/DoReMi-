@@ -22,7 +22,7 @@ import { FrequencyResponseGraph } from '../components/FrequencyResponseGraph';
 import { GraphicEqPanel } from '../components/GraphicEqPanel';
 import { ParametricEqPanel } from '../components/ParametricEqPanel';
 import { ToggleSwitch } from '../components/ToggleSwitch';
-import { useAudioDspState, usePlaybackState } from '../stores/player-store';
+import { useAudioDspState, usePlaybackStatus } from '../stores/player-store';
 import { uiStore, useUiState } from '../stores/ui-store';
 
 const REPLAYGAIN_OPTIONS: Array<{ value: ReplayGainMode; label: string }> = [
@@ -33,7 +33,7 @@ const REPLAYGAIN_OPTIONS: Array<{ value: ReplayGainMode; label: string }> = [
 
 export function AudioLabPage() {
   const ui = useUiState();
-  const player = usePlaybackState();
+  const playbackStatus = usePlaybackStatus();
   const dsp = useAudioDspState();
   const userAccent = uiStore.getUserAccentPalette();
   const [selectedParametricIndex, setSelectedParametricIndex] = useState<number | null>(0);
@@ -81,7 +81,7 @@ export function AudioLabPage() {
         ? `Web Audio DSP Active · ${srKhz} kHz · ${activeSlot.mode === 'parametric' ? 'Parametric 8-Band' : 'Graphic 10-Band'}`
         : `Web Audio DSP Bypass · ${srKhz} kHz · Tín hiệu đi thẳng 0 dB`;
     }
-    if (player.status === 'playing' && ui.activeSource === 'local') {
+    if (playbackStatus === 'playing' && ui.activeSource === 'local') {
       return audioLab.enabled
         ? 'DSP Sẵn Sàng · Đang đồng bộ với bài hát hiện tại'
         : 'Direct Playback · Bật EQ để kích hoạt chuỗi lọc Web Audio';
@@ -119,7 +119,7 @@ export function AudioLabPage() {
     dsp.mode === 'dsp' &&
     dsp.contextState === 'running' &&
     dsp.analyserAvailable &&
-    player.status === 'playing';
+    playbackStatus === 'playing';
 
   return (
     <div

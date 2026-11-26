@@ -4,15 +4,22 @@
  */
 
 const LATIN_SEGMENT_REGEX = /[A-Za-z\u00C0-\u024F\u1E00-\u1EFF]+/g;
+const NORMALIZE_CACHE_MAX = 65_536;
+const normalizeTextCache = new Map<string, string>();
 
 /**
  * Normalizes text ONLY for search matching (never mutates stored original strings):
  * - Vietnamese / Latin segments have accents folded (đ -> d, á -> a) and lowercased.
  * - CJK (Han/Kanji, Hiragana, Katakana, Hangul) and other Unicode scripts stay intact in NFC!
+ * - Uses bounded Map cache so interactive filtering over 5,000–50,000 tracks avoids repeated NFD/regex churn.
  */
 export function normalizeVietnameseText(input: string): string {
   if (!input) {
     return '';
+  }
+  const cached = normalizeTextCache.get(input);
+  if (cached !== undefined) {
+    return cached;
   }
   const nfc = input.normalize('NFC');
   const folded = nfc.replace(LATIN_SEGMENT_REGEX, (segment) =>
@@ -23,11 +30,20 @@ export function normalizeVietnameseText(input: string): string {
       .replace(/[\u0300-\u036f]/g, '')
       .toLowerCase(),
   );
-  return folded.toLowerCase().replace(/\s+/g, ' ').trim();
+  const result = folded.toLowerCase().replace(/\s+/g, ' ').trim();
+  if (input.length <= 240) {
+    if (normalizeTextCache.size >= NORMALIZE_CACHE_MAX) {
+      normalizeTextCache.clear();
+    }
+    normalizeTextCache.set(input, result);
+  }
+  return result;
 }
 
-export function matchesVietnameseQuery(target: string | null | undefined, query: string): boolean {
-  const normalizedQuery = normalizeVietnameseText(query);
+export function matchesNormalizedVietnameseQuery(
+  target: string | null | undefined,
+  normalizedQuery: string,
+): boolean {
   if (!normalizedQuery) {
     return true;
   }
@@ -35,6 +51,10 @@ export function matchesVietnameseQuery(target: string | null | undefined, query:
     return false;
   }
   return normalizeVietnameseText(target).includes(normalizedQuery);
+}
+
+export function matchesVietnameseQuery(target: string | null | undefined, query: string): boolean {
+  return matchesNormalizedVietnameseQuery(target, normalizeVietnameseText(query));
 }
 
 const unicodeCollator = new Intl.Collator(undefined, {
@@ -62,12 +82,17 @@ export function getActiveLyricIndex(lines: readonly TimedLyricLine[], currentTim
   if (lines.length === 0 || !Number.isFinite(currentTimeSec)) {
     return -1;
   }
+  const threshold = currentTimeSec + 0.05;
+  let lo = 0;
+  let hi = lines.length - 1;
   let active = -1;
-  for (let i = 0; i < lines.length; i += 1) {
-    if (lines[i].timeSec <= currentTimeSec + 0.05) {
-      active = i;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (lines[mid].timeSec <= threshold) {
+      active = mid;
+      lo = mid + 1;
     } else {
-      break;
+      hi = mid - 1;
     }
   }
   return active;

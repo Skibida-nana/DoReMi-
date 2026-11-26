@@ -12,17 +12,17 @@ import {
   parseReplayGainAndLoudnessTags,
   resolveDecoderStrategy,
 } from '../src/main/services/codec/audio-analyzer';
-import { CodecManager } from '../src/main/services/codec/codec-manager';
+import {
+  createMockCodecManager,
+  writeCrossPlatformMockCli,
+} from './helpers/cross-platform-codec-harness';
 
 async function createTempDir(prefix: string): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), prefix));
 }
 
 async function writeMockExecutable(dir: string, fileName: string, scriptBody: string): Promise<string> {
-  const fullPath = path.join(dir, fileName);
-  await fs.writeFile(fullPath, `#!/usr/bin/env node\n${scriptBody}\n`, 'utf8');
-  await fs.chmod(fullPath, 0o755);
-  return fullPath;
+  return writeCrossPlatformMockCli(dir, fileName, scriptBody);
 }
 
 function buildWavPackHeader(flags: number): Buffer {
@@ -204,11 +204,10 @@ test('Phase 03B Analyzer: granular FFprobe error taxonomy & no fake default chan
 
   try {
     // 1. FFprobe missing -> offline fallback reports ffprobeStatus = 'missing' and channels/bitDepth/sampleRate = null
-    const cmMissing = new CodecManager({
+    const cmMissing = createMockCodecManager({
       userDataDir: path.join(userData, 'missing'),
       platform: process.platform,
       arch: process.arch,
-      allowPosixTestScripts: true,
     });
     const analyzerMissing = new AudioAnalyzerService(cmMissing);
     const reportMissing = await analyzerMissing.analyzeFile(mysteryFile);
@@ -258,11 +257,10 @@ test('Phase 03B Analyzer: granular FFprobe error taxonomy & no fake default chan
       `,
     );
 
-    const cmOk = new CodecManager({
+    const cmOk = createMockCodecManager({
       userDataDir: path.join(userData, 'ok'),
       platform: process.platform,
       arch: process.arch,
-      allowPosixTestScripts: true,
     });
     await cmOk.importCustomBinary('ffprobe', okFfprobe, {
       userConfirmed: true,
@@ -294,11 +292,10 @@ test('Phase 03B Analyzer: granular FFprobe error taxonomy & no fake default chan
       process.exit(1);
       `,
     );
-    const cmFail = new CodecManager({
+    const cmFail = createMockCodecManager({
       userDataDir: path.join(userData, 'fail'),
       platform: process.platform,
       arch: process.arch,
-      allowPosixTestScripts: true,
     });
     await cmFail.importCustomBinary('ffprobe', failFfprobe, {
       userConfirmed: true,
@@ -323,11 +320,10 @@ test('Phase 03B Analyzer: granular FFprobe error taxonomy & no fake default chan
       process.exit(0);
       `,
     );
-    const cmBadJson = new CodecManager({
+    const cmBadJson = createMockCodecManager({
       userDataDir: path.join(userData, 'badjson'),
       platform: process.platform,
       arch: process.arch,
-      allowPosixTestScripts: true,
     });
     await cmBadJson.importCustomBinary('ffprobe', badJsonFfprobe, {
       userConfirmed: true,
@@ -349,11 +345,10 @@ test('Phase 03B Analyzer: granular FFprobe error taxonomy & no fake default chan
       setInterval(() => {}, 10000);
       `,
     );
-    const cmTimeout = new CodecManager({
+    const cmTimeout = createMockCodecManager({
       userDataDir: path.join(userData, 'timeout'),
       platform: process.platform,
       arch: process.arch,
-      allowPosixTestScripts: true,
     });
     await cmTimeout.importCustomBinary('ffprobe', slowFfprobe, {
       userConfirmed: true,
@@ -378,11 +373,10 @@ test('Phase 03B Analyzer: granular FFprobe error taxonomy & no fake default chan
       process.exit(0);
       `,
     );
-    const cmNoAudio = new CodecManager({
+    const cmNoAudio = createMockCodecManager({
       userDataDir: path.join(userData, 'noaudio'),
       platform: process.platform,
       arch: process.arch,
-      allowPosixTestScripts: true,
     });
     await cmNoAudio.importCustomBinary('ffprobe', noAudioFfprobe, {
       userConfirmed: true,

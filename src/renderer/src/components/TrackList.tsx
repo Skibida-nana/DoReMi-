@@ -1,7 +1,11 @@
 import { AlertTriangle, Music, Pause, Play } from 'lucide-react';
 import type { TrackRecord } from '../../../shared/types/track';
 import { libraryStore, useLibraryState } from '../stores/library-store';
-import { playerActions, usePlaybackState } from '../stores/player-store';
+import {
+  playerActions,
+  usePlaybackStatus,
+  usePlaybackTrackId,
+} from '../stores/player-store';
 import { formatDurationMs, formatTrackAudioSpecs } from '../utils/formatters';
 
 interface TrackListProps {
@@ -10,12 +14,13 @@ interface TrackListProps {
 
 export function TrackList({ tracks }: TrackListProps) {
   const { isLoadingInitial, isElectronAvailable, searchQuery, filterMode } = useLibraryState();
-  const playback = usePlaybackState();
+  const playbackTrackId = usePlaybackTrackId();
+  const playbackStatus = usePlaybackStatus();
 
   if (isLoadingInitial) {
     return (
       <div className="flex flex-1 items-center justify-center p-8 text-sm text-zinc-400">
-        Đang tải danh sách bài hát từ cơ sở dữ liệu SQLite...
+        Đang tải danh sách bài hát từ thư viện...
       </div>
     );
   }
@@ -35,7 +40,7 @@ export function TrackList({ tracks }: TrackListProps) {
         <p className="mt-1.5 max-w-md text-xs leading-relaxed text-zinc-500">
           {isFiltered
             ? 'Thử xóa từ khóa tìm kiếm hoặc chuyển về chế độ "Tất cả bài hát".'
-            : 'Import file FLAC, MP3, WAV hoặc chọn cả thư mục nhạc. DoReMi giữ nguyên file gốc tại vị trí cũ và chỉ lưu metadata vào SQLite.'}
+            : 'Import file FLAC, MP3, WAV hoặc chọn cả thư mục nhạc. DoReMi giữ nguyên file gốc tại vị trí cũ và lưu thông tin trong thư viện cục bộ.'}
         </p>
         {!isFiltered && isElectronAvailable && (
           <div className="mt-5 flex items-center gap-2.5">
@@ -60,12 +65,12 @@ export function TrackList({ tracks }: TrackListProps) {
   }
 
   const handleRowPlayToggle = (track: TrackRecord) => {
-    const isCurrent = playback.currentTrackId === track.id;
-    if (isCurrent && (playback.status === 'playing' || playback.status === 'loading')) {
+    const isCurrent = playbackTrackId === track.id;
+    if (isCurrent && (playbackStatus === 'playing' || playbackStatus === 'loading')) {
       playerActions.pause();
       return;
     }
-    if (isCurrent && playback.status === 'paused') {
+    if (isCurrent && playbackStatus === 'paused') {
       void playerActions.resume();
       return;
     }
@@ -96,8 +101,8 @@ export function TrackList({ tracks }: TrackListProps) {
         </thead>
         <tbody className="divide-y divide-zinc-900/90">
           {tracks.map((track, index) => {
-            const isCurrent = playback.currentTrackId === track.id;
-            const isPlaying = isCurrent && playback.status === 'playing';
+            const isCurrent = playbackTrackId === track.id;
+            const isPlaying = isCurrent && playbackStatus === 'playing';
             const isMissing = track.status === 'missing';
             const isError = track.status === 'error';
 

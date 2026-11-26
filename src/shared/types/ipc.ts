@@ -3,8 +3,11 @@ import type {
   ClearLibraryResult,
   ImportSummary,
   LibraryExclusionRecord,
+  LibraryRootRecord,
   LibrarySnapshot,
+  OptionalCodecStatusReport,
   ReimportExcludedResult,
+  RelinkSingleFileResult,
   RemoveTracksResult,
   RemoveWatchedFolderMode,
   RemoveWatchedFolderResult,
@@ -14,6 +17,16 @@ import type {
   VerifyTrackResult,
   WatchedFolderSummary,
 } from './library';
+import type {
+  AddTracksToPlaylistOptions,
+  AddTracksToPlaylistResult,
+  CreatePlaylistInput,
+  LegacyCollectionsMigrationInput,
+  PlaylistArtworkActionResult,
+  PlaylistRecord,
+  PlaylistSnapshot,
+  UpdatePlaylistInput,
+} from './playlist';
 import type {
   CustomEditorialFontRecord,
   ListeningSessionInput,
@@ -52,6 +65,7 @@ export interface ProfileMediaActionResult {
 
 export interface LosslessDesktopApi {
   getAppInfo(): Promise<AppRuntimeInfo>;
+  probeOptionalCodecs?(forceRefresh?: boolean): Promise<OptionalCodecStatusReport>;
   getLibrarySnapshot(): Promise<LibrarySnapshot>;
   importFiles(): Promise<ImportSummary>;
   importFolder(): Promise<ImportSummary>;
@@ -127,6 +141,9 @@ export interface LosslessDesktopApi {
     callback: (event: import('./stage6').ExternalFilesOpenEvent) => void,
   ): () => void;
   getDiagnosticLogs?(): Promise<import('./stage6').DiagnosticLogEntry[]>;
+  recordDiagnosticLog?(
+    entry: import('./stage6').DiagnosticRecordInput,
+  ): Promise<{ recorded: boolean }>;
 
   // Phase 8: Library Track Removal, Exclusions, Watched Folders & Optional Recycle Bin (Not yet wired in preload/IPC)
   removeTracksFromLibrary?(
@@ -145,6 +162,41 @@ export interface LosslessDesktopApi {
   listExcludedTracks?(): Promise<LibraryExclusionRecord[]>;
   reimportExcludedTracks?(exclusionIds?: readonly string[]): Promise<ReimportExcludedResult>;
   clearExclusions?(exclusionIds?: readonly string[]): Promise<{ clearedCount: number }>;
+
+  // Phase 3: Cancel Rescan, Root Settings, Single File Relink, SQLite Playlists & Favorites
+  cancelRescan?(): Promise<{ canceled: boolean }>;
+  updateLibraryRootSettings?(
+    rootId: string,
+    patch: { recursive?: boolean; enabled?: boolean; auto_watch?: boolean },
+  ): Promise<LibraryRootRecord | null>;
+  relinkSingleTrackDialog?(trackId: string): Promise<RelinkSingleFileResult>;
+  getPlaylistSnapshot?(): Promise<PlaylistSnapshot>;
+  createPlaylist?(input: CreatePlaylistInput): Promise<PlaylistRecord>;
+  updatePlaylist?(playlistId: string, input: UpdatePlaylistInput): Promise<PlaylistRecord>;
+  deletePlaylist?(playlistId: string): Promise<{ deleted: boolean }>;
+  addTracksToPlaylist?(
+    playlistId: string,
+    trackIds: readonly string[],
+    options?: AddTracksToPlaylistOptions,
+  ): Promise<AddTracksToPlaylistResult>;
+  removeEntriesFromPlaylist?(
+    playlistId: string,
+    entryIds: readonly string[],
+  ): Promise<PlaylistRecord>;
+  reorderPlaylistEntries?(
+    playlistId: string,
+    orderedEntryIds: readonly string[],
+  ): Promise<PlaylistRecord>;
+  importPlaylistArtwork?(playlistId: string): Promise<PlaylistArtworkActionResult>;
+  removePlaylistArtwork?(playlistId: string): Promise<PlaylistArtworkActionResult>;
+  migrateLegacyCollectionsToSqlite?(
+    legacy: LegacyCollectionsMigrationInput,
+  ): Promise<PlaylistSnapshot>;
+  toggleFavoriteTrack?(trackId: string): Promise<{ isFavorite: boolean; favoriteTrackIds: string[] }>;
+  setFavoriteTracks?(
+    trackIds: readonly string[],
+    favorite: boolean,
+  ): Promise<{ favoriteTrackIds: string[] }>;
 
   // Native Audio Codec Engine, Default Encoder Pack, Converter, Analyzer & Update Manager (Isolated in Phase 01; wired in Phase 04/05)
   getCodecInventory?(): Promise<import('./codec-engine').CodecInventorySnapshot>;

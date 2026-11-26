@@ -138,3 +138,57 @@ test('AudioEngine manages play, pause, resume, seek without reloading src, volum
   assert.equal(engine.getPlaybackState().status, 'error');
   assert.ok(engine.getPlaybackState().errorMessage);
 });
+
+test('Phase 5.1D: subscribeCore suppresses pure timeupdate churn while preserving 3s canPrevious & metadata updates', async () => {
+  const fakeAudio = new FakeAudioElement();
+  const track1 = makeTrack('11111111-1111-4111-8111-111111111111', 'Track One');
+  const track2 = makeTrack('22222222-2222-4222-8222-222222222222', 'Track Two');
+
+  const engine = new AudioEngine({
+    createAudioElement: () => fakeAudio,
+    verifyTrack: async (id) => ({ trackId: id, exists: true, status: 'available' }),
+  });
+
+  engine.setQueue([track1, track2]);
+  await engine.play(track1.id);
+
+  let fullTicks = 0;
+  let coreTicks = 0;
+  const unsubFull = engine.subscribe(() => {
+    fullTicks += 1;
+  });
+  const unsubCore = engine.subscribeCore(() => {
+    coreTicks += 1;
+  });
+
+  // Sub-3s steady progress ticks must update full listeners without firing core listeners
+  for (const t of [0.25, 0.5, 0.75, 1.0, 1.25, 1.5]) {
+    fakeAudio.currentTime = t;
+    fakeAudio.emit('timeupdate');
+  }
+  assert.equal(fullTicks, 6);
+  assert.equal(coreTicks, 0);
+
+  // Crossing 3s updates canPrevious -> core listener fires once, then stays silent for subsequent ticks
+  fakeAudio.currentTime = 3.5;
+  fakeAudio.emit('timeupdate');
+  assert.equal(coreTicks, 1);
+  assert.equal(engine.getCorePlaybackState().canPrevious, true);
+
+  for (const t of [4.0, 5.0, 6.0]) {
+    fakeAudio.currentTime = t;
+    fakeAudio.emit('timeupdate');
+  }
+  assert.equal(fullTicks, 10);
+  assert.equal(coreTicks, 1);
+
+  // Volume & Next still propagate through core listeners immediately
+  engine.setVolume(0.5);
+  assert.equal(coreTicks, 2);
+  await engine.next();
+  assert.equal(engine.getCorePlaybackState().currentTrackId, track2.id);
+  assert.ok(coreTicks >= 3);
+
+  unsubFull();
+  unsubCore();
+});

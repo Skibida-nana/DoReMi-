@@ -95,6 +95,22 @@ test('LibraryService handles recursive import, duplicate re-import, corrupted fi
       const recoveredTrack = snapshot4.tracks.find((t) => t.id === missingTrack.id);
       assert.ok(recoveredTrack);
       assert.equal(recoveredTrack.status, 'available');
+
+      // 6. Phase 5.1F steady-state rescan skips unchanged files without re-updating while catching new files
+      const steadyRescan = await service.rescanLibrary();
+      assert.equal(steadyRescan.addedCount, 0);
+      assert.equal(steadyRescan.updatedCount, 0);
+      assert.equal(steadyRescan.skippedCount, 3);
+
+      writeFixtureFile(
+        path.join(musicDir, 'Album C', 'Track 04.flac'),
+        createFlacMetadataBuffer({ title: 'Track 04 New', artist: 'Artist C' }),
+      );
+      const incrementalRescan = await service.rescanLibrary();
+      assert.equal(incrementalRescan.addedCount, 1);
+      assert.equal(incrementalRescan.updatedCount, 0);
+      assert.equal(incrementalRescan.skippedCount, 3);
+      assert.equal(service.getSnapshot().tracks.length, 4);
     } finally {
       conn.close();
     }

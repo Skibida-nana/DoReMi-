@@ -10,7 +10,6 @@ import {
   validateOutputPathSafety,
   verifyAudioContainerHeader,
 } from '../src/main/services/codec/audio-processing-service';
-import { CodecManager } from '../src/main/services/codec/codec-manager';
 import {
   FfmpegCapabilityDetector,
   parseFfmpegDecodersOutput,
@@ -19,6 +18,12 @@ import {
   parseFfmpegSampleFormatsOutput,
 } from '../src/main/services/codec/ffmpeg-capabilities';
 import { ResourcePolicyManager } from '../src/main/services/codec/resource-policy';
+import {
+  createMockCodecManager,
+  createSimulatedPathSafetyOps,
+  probeOsLinkSupport,
+  writeCrossPlatformMockCli,
+} from './helpers/cross-platform-codec-harness';
 import type {
   CodecId,
   ConversionProgressEvent,
@@ -39,10 +44,7 @@ async function createTempDir(prefix: string): Promise<string> {
 }
 
 async function writeMockExecutable(dir: string, fileName: string, scriptBody: string): Promise<string> {
-  const fullPath = path.join(dir, fileName);
-  await fs.writeFile(fullPath, `#!/usr/bin/env node\n${scriptBody}\n`, 'utf8');
-  await fs.chmod(fullPath, 0o755);
-  return fullPath;
+  return writeCrossPlatformMockCli(dir, fileName, scriptBody);
 }
 
 function createFakeWavBuffer(): Buffer {
@@ -358,11 +360,10 @@ fltp      32
   );
 
   try {
-    const codecManager = new CodecManager({
+    const codecManager = createMockCodecManager({
       userDataDir: userData,
       platform: process.platform,
       arch: process.arch,
-      allowPosixTestScripts: true,
     });
     const detector = new FfmpegCapabilityDetector(codecManager);
 
@@ -391,7 +392,7 @@ fltp      32
   }
 });
 
-test('Phase 03B Conversion: Source File Protection (symlink, hardlink, escape) & Output Collision Reservation Lock', async () => {
+test('Phase 03B Conversion: Source File Protection (canonical escape, simulated links, Windows case) & Output Collision Reservation Lock', async () => {
   const tmp = await createTempDir('doremi-protect-');
   const srcDir = path.join(tmp, 'src');
   const outDir = path.join(tmp, 'out');
@@ -402,44 +403,60 @@ test('Phase 03B Conversion: Source File Protection (symlink, hardlink, escape) &
   await fs.writeFile(sourcePath, Buffer.from('fLaC-original-master-data'));
 
   try {
-    // 1. Symlink inside outDir pointing back to sourcePath
-    const symlinkDest = path.join(outDir, 'track.flac');
-    await fs.symlink(sourcePath, symlinkDest);
-    assert.equal(await arePathsSamePhysicalFile(sourcePath, symlinkDest), true);
-
+    // 1. Deterministic DI protection tests (always run regardless of kernel symlink privileges):
+    //    a) Simulated file symlink inside outDir pointing back to sourcePath
+    const symCandidate = path.join(outDir, 'track.flac');
+    await fs.writeFile(symCandidate, Buffer.from('placeholder'));
+    const simSymlinkOps = createSimulatedPathSafetyOps({
+      realpathOverrides: { [symCandidate]: sourcePath },
+      symlinkPaths: new Set([symCandidate]),
+    });
+    assert.equal(await arePathsSamePhysicalFile(sourcePath, symCandidate, process.platform, simSymlinkOps), true);
     const symlinkSafety = await validateOutputPathSafety({
       sourcePath,
-      candidatePath: symlinkDest,
+      candidatePath: symCandidate,
       outputDir: outDir,
+      fsOps: simSymlinkOps,
     });
     assert.equal(symlinkSafety.safe, false);
 
-    // resolveConversionOutputPath redirects safely away from symlinked source even on overwrite
-    const resolvedSymlink = await resolveConversionOutputPath({
+    //    b) Simulated directory junction inside outDir escaping to outside srcDir
+    const junctionEscapedCandidate = path.join(outDir, 'linked-src', 'track.flac');
+    const simJunctionOps = createSimulatedPathSafetyOps({
+      realpathOverrides: {
+        [path.join(outDir, 'linked-src')]: srcDir,
+        [junctionEscapedCandidate]: sourcePath,
+      },
+    });
+    const junctionSafety = await validateOutputPathSafety({
+      sourcePath,
+      candidatePath: junctionEscapedCandidate,
+      outputDir: outDir,
+      fsOps: simJunctionOps,
+    });
+    assert.equal(junctionSafety.safe, false);
+
+    //    c) Simulated NTFS hard link sharing physical (dev, ino)
+    const hardCandidate = path.join(outDir, 'hard-copy.flac');
+    await fs.writeFile(hardCandidate, Buffer.from('hard-alias'));
+    const simHardlinkOps = createSimulatedPathSafetyOps({
+      sharedInodePaths: new Set([sourcePath, hardCandidate]),
+    });
+    assert.equal(await arePathsSamePhysicalFile(sourcePath, hardCandidate, process.platform, simHardlinkOps), true);
+
+    const resolvedRedirect = await resolveConversionOutputPath({
       sourcePath,
       outputDir: outDir,
       extension: '.flac',
       conflictPolicy: 'overwrite',
+      fsOps: simSymlinkOps,
     });
-    assert.notEqual(path.resolve(resolvedSymlink.outputPath), path.resolve(symlinkDest));
-    assert.ok(resolvedSymlink.outputPath.includes('(Converted)'));
+    assert.notEqual(path.resolve(resolvedRedirect.outputPath), path.resolve(symCandidate));
+    assert.ok(resolvedRedirect.outputPath.includes('(Converted)'));
+    await fs.rm(symCandidate);
+    await fs.rm(hardCandidate);
 
-    // 2. Hard link inside outDir pointing to same inode as sourcePath
-    await fs.rm(symlinkDest);
-    const hardlinkDest = path.join(outDir, 'track.flac');
-    await fs.link(sourcePath, hardlinkDest);
-    assert.equal(await arePathsSamePhysicalFile(sourcePath, hardlinkDest), true);
-
-    const resolvedHardlink = await resolveConversionOutputPath({
-      sourcePath,
-      outputDir: outDir,
-      extension: '.flac',
-      conflictPolicy: 'overwrite',
-    });
-    assert.notEqual(path.resolve(resolvedHardlink.outputPath), path.resolve(hardlinkDest));
-    assert.ok(resolvedHardlink.outputPath.includes('(Converted)'));
-
-    // 3. Output Path Collision Reservation across concurrent jobs
+    // 2. Output Path Collision Reservation across concurrent jobs
     const reserved = new Set<string>();
     const cleanOutDir = path.join(tmp, 'clean-out');
     await fs.mkdir(cleanOutDir, { recursive: true });
@@ -482,6 +499,48 @@ test('Phase 03B Conversion: Source File Protection (symlink, hardlink, escape) &
       reservedPaths: reserved,
     });
     assert.equal(rOverwrite.conflictWithReservation, true);
+  } finally {
+    await fs.rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('Phase 4.5C OS Reparse Integration: real kernel file symlink, directory junction & hardlink safety when OS permits', async (t) => {
+  const caps = await probeOsLinkSupport();
+  if (!caps.fileSymlink && !caps.junction && !caps.hardLink) {
+    t.skip(
+      `OS kernel reparse links blocked in current environment (fileSymlink=${caps.fileSymlinkErrorCode}, junction=${caps.junctionErrorCode}, hardLink=${caps.hardLinkErrorCode}). Run outside restricted sandbox / with Developer Mode to verify OS kernel links.`,
+    );
+    return;
+  }
+
+  const tmp = await createTempDir('doremi-os-reparse-');
+  const srcDir = path.join(tmp, 'src');
+  const outDir = path.join(tmp, 'out');
+  await fs.mkdir(srcDir, { recursive: true });
+  await fs.mkdir(outDir, { recursive: true });
+  const sourcePath = path.join(srcDir, 'track.flac');
+  await fs.writeFile(sourcePath, Buffer.from('fLaC-real-os-reparse'));
+
+  try {
+    if (caps.fileSymlink) {
+      const symlinkDest = path.join(outDir, 'sym-track.flac');
+      await fs.symlink(sourcePath, symlinkDest, 'file');
+      assert.equal(await arePathsSamePhysicalFile(sourcePath, symlinkDest), true);
+      assert.equal((await validateOutputPathSafety({ sourcePath, candidatePath: symlinkDest, outputDir: outDir })).safe, false);
+    }
+    if (caps.junction) {
+      const junctionDir = path.join(outDir, 'junction-src');
+      await fs.symlink(srcDir, junctionDir, 'junction');
+      const junctionCandidate = path.join(junctionDir, 'track.flac');
+      assert.equal(await arePathsSamePhysicalFile(sourcePath, junctionCandidate), true);
+      assert.equal((await validateOutputPathSafety({ sourcePath, candidatePath: junctionCandidate, outputDir: outDir })).safe, false);
+    }
+    if (caps.hardLink) {
+      const hardDest = path.join(outDir, 'hard-track.flac');
+      await fs.link(sourcePath, hardDest);
+      assert.equal(await arePathsSamePhysicalFile(sourcePath, hardDest), true);
+      assert.equal((await validateOutputPathSafety({ sourcePath, candidatePath: hardDest, outputDir: outDir })).safe, false);
+    }
   } finally {
     await fs.rm(tmp, { recursive: true, force: true });
   }
@@ -535,11 +594,10 @@ test('Phase 03B Conversion: Queue Pause/Resume, Honest Progress, Output Verifica
     `,
   );
 
-  const codecManager = new CodecManager({
+  const codecManager = createMockCodecManager({
     userDataDir: userData,
     platform: process.platform,
     arch: process.arch,
-    allowPosixTestScripts: true,
   });
   await codecManager.importCustomBinary('flac', mockFlac, {
     userConfirmed: true,
@@ -659,11 +717,10 @@ test('Phase 03B Conversion: Startup & Inactivity/Stall Timeout kills hung encode
     `,
   );
 
-  const codecManager = new CodecManager({
+  const codecManager = createMockCodecManager({
     userDataDir: userData,
     platform: process.platform,
     arch: process.arch,
-    allowPosixTestScripts: true,
   });
   await codecManager.importCustomBinary('flac', hangingFlac, {
     userConfirmed: true,
@@ -807,11 +864,10 @@ test('Phase 03B Conversion: verified-full with FFprobe and lossless-to-lossless 
     `,
   );
 
-  const codecManager = new CodecManager({
+  const codecManager = createMockCodecManager({
     userDataDir: userData,
     platform: process.platform,
     arch: process.arch,
-    allowPosixTestScripts: true,
   });
   await codecManager.importCustomBinary('flac', mockFlac, { userConfirmed: true, originNote: 'test' });
   await codecManager.importCustomBinary('ffprobe', mockFfprobe, { userConfirmed: true, originNote: 'test' });

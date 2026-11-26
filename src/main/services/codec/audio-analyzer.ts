@@ -10,11 +10,16 @@ import type {
   SourceSampleFormat,
   WavPackModeKind,
 } from '../../../shared/types/codec-engine';
-import { isAlacTrackMetadata } from '../../../shared/utils/audio-codec';
+import {
+  isAlacTrackMetadata,
+  resolveMp4AudioMetadataOverride,
+  toValidatedAudioPositiveInt,
+} from '../../../shared/utils/audio-codec';
 import { detectMp4AudioCodec } from '../alac-decoder';
 import { readTrackMetadata } from '../metadata-service';
 import { extractFileExtension } from '../path-utils';
 import type { CodecManager } from './codec-manager';
+import { type CodecProcessAdapter, defaultNativeProcessAdapter } from './process-execution';
 import type { ResourcePolicyManager } from './resource-policy';
 
 const DEFAULT_FFPROBE_TIMEOUT_MS = 12_000;
@@ -462,6 +467,7 @@ export async function runFfprobeJsonDetailed(
   ffprobePath: string,
   filePath: string,
   timeoutMs = DEFAULT_FFPROBE_TIMEOUT_MS,
+  processAdapter: CodecProcessAdapter = defaultNativeProcessAdapter,
 ): Promise<FfprobeRunResult> {
   return new Promise((resolve) => {
     let stdout = '';
@@ -470,7 +476,7 @@ export async function runFfprobeJsonDetailed(
 
     let child: ReturnType<typeof spawn>;
     try {
-      child = spawn(
+      child = processAdapter.spawn(
         ffprobePath,
         [
           '-v',
@@ -482,7 +488,6 @@ export async function runFfprobeJsonDetailed(
           filePath,
         ],
         {
-          shell: false,
           windowsHide: true,
           stdio: ['ignore', 'pipe', 'pipe'],
         },
@@ -617,15 +622,18 @@ function mapFfprobeFailureWarning(
 export class AudioAnalyzerService {
   private readonly resourcePolicy?: ResourcePolicyManager;
   private readonly ffprobeTimeoutMs: number;
+  private readonly processAdapter: CodecProcessAdapter;
   private activeProbes = 0;
   private readonly probeWaiters: Array<() => void> = [];
 
   constructor(
     private readonly codecManager: CodecManager,
-    options?: AudioAnalyzerServiceOptions,
+    options?: AudioAnalyzerServiceOptions & { processAdapter?: CodecProcessAdapter },
   ) {
     this.resourcePolicy = options?.resourcePolicy;
     this.ffprobeTimeoutMs = options?.ffprobeTimeoutMs ?? DEFAULT_FFPROBE_TIMEOUT_MS;
+    this.processAdapter =
+      options?.processAdapter ?? codecManager.getProcessAdapter?.() ?? defaultNativeProcessAdapter;
   }
 
   private async acquireProbeSlot(): Promise<void> {
@@ -668,6 +676,7 @@ export class AudioAnalyzerService {
           ffprobeEntry.executablePath,
           resolvedPath,
           this.ffprobeTimeoutMs,
+          this.processAdapter,
         );
         if (probeRes.status === 'ok' && probeRes.data) {
           const streams = probeRes.data.streams ?? [];
@@ -756,20 +765,26 @@ export class AudioAnalyzerService {
       const meta = await readTrackMetadata(resolvedPath);
       const ext = extractFileExtension(resolvedPath);
       let codecName = meta.codec ?? null;
-      let sampleRateHz = meta.sample_rate_hz ?? null;
-      let bitDepth = meta.bit_depth ?? null;
-      let channels: number | null = null;
+      let sampleRateHz = toValidatedAudioPositiveInt(meta.sample_rate_hz, 768_000);
+      let bitDepth = toValidatedAudioPositiveInt(meta.bit_depth, 64);
+      let channels: number | null = toValidatedAudioPositiveInt(meta.channels, 32);
 
       if (ext === '.m4a' || ext === '.mp4') {
         const mp4Probe = await detectMp4AudioCodec(resolvedPath);
-        if (mp4Probe.codec === 'alac') {
-          codecName = 'alac';
-          sampleRateHz = mp4Probe.sampleRateHz ?? sampleRateHz;
-          bitDepth = mp4Probe.bitDepth ?? bitDepth;
-          channels = mp4Probe.channels ?? null;
-        } else if (mp4Probe.codec === 'aac') {
-          codecName = 'aac';
+        const resolvedMp4 = resolveMp4AudioMetadataOverride({
+          mp4Probe,
+          parsedCodec: codecName,
+          parsedContainer: meta.container ?? null,
+          parsedSampleRateHz: sampleRateHz,
+          parsedBitDepth: bitDepth,
+          parsedChannels: channels,
+        });
+        if (resolvedMp4.codec) {
+          codecName = resolvedMp4.codec.toLowerCase();
         }
+        sampleRateHz = resolvedMp4.sampleRateHz;
+        bitDepth = resolvedMp4.bitDepth;
+        channels = resolvedMp4.channels;
       }
 
       const wavpackMode =
@@ -851,6 +866,7 @@ export class AudioAnalyzerService {
           ffprobeEntry.executablePath,
           resolvedPath,
           this.ffprobeTimeoutMs,
+          this.processAdapter,
         );
         ffprobeStatus = res.status;
         ffprobeErrorDetail = res.errorDetail;
@@ -920,8 +936,9 @@ export class AudioAnalyzerService {
         : typeof audioStream?.bits_per_sample === 'number' && audioStream.bits_per_sample > 0
           ? audioStream.bits_per_sample
           : null;
-      const bitDepth =
-        rawBits && Number.isFinite(rawBits) && rawBits > 0
+      const bitDepth = isKnownLossyCodecName(codecName.toLowerCase())
+        ? null
+        : rawBits && Number.isFinite(rawBits) && rawBits > 0
           ? rawBits
           : inferBitDepthFromCodecOrSampleFmt(codecName, rawSampleFmt);
 
@@ -1053,10 +1070,10 @@ export class AudioAnalyzerService {
 
     let codecName = meta?.codec?.trim() ?? '';
     let codecInferredFromExtension = false;
-    let sampleRateHz = meta?.sample_rate_hz ?? null;
-    let bitDepth = meta?.bit_depth ?? null;
+    let sampleRateHz = toValidatedAudioPositiveInt(meta?.sample_rate_hz, 768_000);
+    let bitDepth = toValidatedAudioPositiveInt(meta?.bit_depth, 64);
     // NEVER hardcode channels = 2 when missing!
-    let channels: number | null = null;
+    let channels: number | null = toValidatedAudioPositiveInt(meta?.channels, 32);
 
     if (ext === '.m4a' || ext === '.mp4') {
       const mp4Probe = await detectMp4AudioCodec(resolvedPath).catch(() => ({
@@ -1065,14 +1082,20 @@ export class AudioAnalyzerService {
         bitDepth: null,
         channels: null,
       }));
-      if (mp4Probe.codec === 'alac') {
-        codecName = 'alac';
-        sampleRateHz = mp4Probe.sampleRateHz ?? sampleRateHz;
-        bitDepth = mp4Probe.bitDepth ?? bitDepth;
-        channels = mp4Probe.channels ?? null;
-      } else if (mp4Probe.codec === 'aac') {
-        codecName = 'aac';
+      const resolvedMp4 = resolveMp4AudioMetadataOverride({
+        mp4Probe,
+        parsedCodec: codecName || null,
+        parsedContainer: meta?.container ?? null,
+        parsedSampleRateHz: sampleRateHz,
+        parsedBitDepth: bitDepth,
+        parsedChannels: channels,
+      });
+      if (resolvedMp4.codec) {
+        codecName = resolvedMp4.codec.toLowerCase();
       }
+      sampleRateHz = resolvedMp4.sampleRateHz;
+      bitDepth = resolvedMp4.bitDepth;
+      channels = resolvedMp4.channels;
     }
 
     if (!codecName) {

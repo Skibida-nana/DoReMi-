@@ -1,28 +1,87 @@
-import { useEffect, useState, type CSSProperties } from 'react';
+import { memo, useEffect, useState, type CSSProperties } from 'react';
 import {
+  Disc3,
   Heart,
   ListMusic,
   Maximize2,
   Pause,
   Play,
-  Repeat,
-  Repeat1,
-  Shuffle,
   SkipBack,
   SkipForward,
   Volume2,
   VolumeX,
 } from 'lucide-react';
 import { DEFAULT_DOREMI_ARTWORK_URL } from '../assets/default-artwork';
-import { useLibraryState } from '../stores/library-store';
-import { usePlaybackState } from '../stores/player-store';
+import { libraryStore, useLibraryState } from '../stores/library-store';
+import {
+  playerActions,
+  usePlaybackCoreState,
+  usePlaybackTimeSeconds,
+} from '../stores/player-store';
 import { uiStore, useUiState } from '../stores/ui-store';
 import { formatDurationSeconds } from '../utils/formatters';
 import { getVolumeSliderVisualState } from '../utils/volume-slider';
+import { PlaybackErrorBanner } from './PlaybackErrorBanner';
+import { ShuffleButton } from './PlaybackModeControls';
+import { PlaybackOptionsPopover } from './PlaybackOptionsPopover';
+
+const MiniPlayerTimeReadout = memo(function MiniPlayerTimeReadout({
+  hasTrack,
+  duration,
+}: {
+  hasTrack: boolean;
+  duration: number;
+}) {
+  const currentTime = usePlaybackTimeSeconds();
+  return (
+    <span className="font-mono-tabular shrink-0 text-[11px] text-[var(--text-muted)]">
+      {formatDurationSeconds(hasTrack ? currentTime : 0)} / {formatDurationSeconds(duration)}
+    </span>
+  );
+});
+
+const MiniPlayerProgressBar = memo(function MiniPlayerProgressBar({
+  hasTrack,
+  duration,
+  accentColor,
+}: {
+  hasTrack: boolean;
+  duration: number;
+  accentColor: string;
+}) {
+  const rawTime = usePlaybackTimeSeconds();
+  const currentTime = hasTrack ? rawTime : 0;
+  const progressPct = duration > 0 ? Math.min(100, (currentTime / duration) * 100) : 0;
+
+  return (
+    <div className="relative mt-1.5 flex items-center">
+      <div className="pointer-events-none h-[3px] w-full overflow-hidden rounded-full bg-[var(--slider-track)]">
+        <div
+          className="h-full rounded-full transition-[width] duration-200"
+          style={{
+            width: `${progressPct}%`,
+            backgroundColor: accentColor,
+          }}
+        />
+      </div>
+      <input
+        type="range"
+        min={0}
+        max={Math.max(1, duration)}
+        step={0.5}
+        disabled={!hasTrack}
+        value={Math.min(currentTime, Math.max(1, duration))}
+        onChange={(e) => uiStore.seek(Number(e.target.value))}
+        aria-label="Tua tiến độ phát nhạc"
+        className="absolute inset-0 h-3 w-full cursor-pointer opacity-0 disabled:cursor-default"
+      />
+    </div>
+  );
+});
 
 export function MiniPlayer() {
   const ui = useUiState();
-  const playback = usePlaybackState();
+  const playback = usePlaybackCoreState();
   const library = useLibraryState();
   const [isVolumeHovered, setIsVolumeHovered] = useState(false);
   const [isVolumeDragging, setIsVolumeDragging] = useState(false);
@@ -46,76 +105,82 @@ export function MiniPlayer() {
     return null;
   }
 
-  // M5.5 §5.5: Mini Player accent & volume fill strictly follow user's chosen Theme Accent
   const userAccent = uiStore.getUserAccentPalette();
   const isLight = ui.preferences.themeMode === 'light';
-  const isLocal = ui.activeSource === 'local' && Boolean(playback.currentTrackId);
-  const localTrack = isLocal
-    ? library.tracks.find((t) => t.id === playback.currentTrackId) ?? playback.currentTrack ?? null
+  void library.tracks;
+  const localTrack = playback.currentTrackId
+    ? libraryStore.getTrackById(playback.currentTrackId) ?? playback.currentTrack ?? null
     : null;
-  const sampleTrack = uiStore.getActiveSampleTrack();
 
-  const activeTrackId = localTrack ? localTrack.id : sampleTrack.id;
-  const title = localTrack ? localTrack.title : sampleTrack.title;
-  const artist = localTrack ? localTrack.artist ?? 'Chưa rõ nghệ sĩ' : sampleTrack.artist;
-  const coverUrl = uiStore.getCoverForTrack(activeTrackId, 'thumb');
+  const hasTrack = Boolean(localTrack);
+  const activeTrackId = localTrack?.id ?? '';
+  const title = localTrack ? localTrack.title : 'Chưa phát bài hát';
+  const artist = localTrack ? localTrack.artist ?? 'Chưa rõ nghệ sĩ' : 'Chọn nhạc từ Thư viện';
+  const coverUrl = localTrack
+    ? uiStore.getCoverForTrack(localTrack.id, 'thumb')
+    : DEFAULT_DOREMI_ARTWORK_URL;
   const formatSummary = localTrack
     ? `${(localTrack.container ?? localTrack.codec ?? 'AUDIO').toUpperCase()}${
         localTrack.bit_depth ? ` · ${localTrack.bit_depth}-bit` : ''
       }`
-    : `${sampleTrack.container} · ${sampleTrack.bitDepth ?? 16}-bit`;
+    : 'Sẵn sàng phát lossless';
 
-  const isPlaying = isLocal ? playback.status === 'playing' : ui.sampleIsPlaying;
-  const currentTime = isLocal ? playback.currentTimeSeconds : ui.sampleCurrentTimeSec;
-  const duration = isLocal
-    ? playback.durationSeconds || (localTrack?.duration_ms ? localTrack.duration_ms / 1000 : 0)
-    : sampleTrack.durationSec;
-  const rawVolume = isLocal ? playback.volume : ui.sampleVolume;
-  const rawMuted = isLocal ? playback.muted : ui.sampleMuted;
+  const isPlaying = Boolean(localTrack && playback.status === 'playing');
+  const playbackError =
+    localTrack && playback.status === 'error' ? playback.errorMessage : null;
+  const duration = localTrack
+    ? playback.durationSeconds || (localTrack.duration_ms ? localTrack.duration_ms / 1000 : 0)
+    : 0;
+  const rawVolume = playback.volume;
+  const rawMuted = playback.muted;
   const volumeVisual = getVolumeSliderVisualState(rawVolume, rawMuted);
   const showVolumeTooltip = isVolumeHovered || isVolumeDragging || isVolumeFocused;
-  const isFavorite = ui.favoriteIds.includes(activeTrackId);
-  const progressPct = duration > 0 ? Math.min(100, (currentTime / duration) * 100) : 0;
+  const isFavorite = Boolean(activeTrackId && uiStore.isFavoriteTrack(activeTrackId));
 
   return (
     <div
-      className="pointer-events-none fixed inset-x-0 bottom-0 z-30 flex justify-center pt-8 pb-5 pl-[76px] pr-6"
+      className="pointer-events-none fixed inset-x-0 bottom-0 z-30 flex flex-col items-center justify-end gap-2 pt-8 pb-5 pl-[76px] pr-6"
       style={{
         background: isLight
           ? 'linear-gradient(0deg, rgba(236,238,245,0.92) 0%, rgba(236,238,245,0.32) 60%, rgba(236,238,245,0) 100%)'
           : 'linear-gradient(0deg, rgba(9,10,13,0.90) 0%, rgba(9,10,13,0.35) 60%, rgba(9,10,13,0) 100%)',
       }}
     >
+      {playbackError && (
+        <PlaybackErrorBanner
+          errorMessage={playbackError}
+          playbackError={playback.playbackError}
+          onRetry={() => void playerActions.resume()}
+          compact
+          className="pointer-events-auto w-full max-w-[920px]"
+        />
+      )}
+
       <div
         role="region"
         aria-label="Trình phát thu gọn"
         className="lp-glass-pill pointer-events-auto relative flex h-[82px] w-full max-w-[920px] items-center justify-between gap-4 rounded-full px-6"
       >
-        {/* Left: Transport Controls */}
-        <div className="flex shrink-0 items-center gap-1.5">
-          <button
-            type="button"
-            onClick={() => uiStore.toggleShuffle()}
-            title="Phát ngẫu nhiên"
-            aria-label="Phát ngẫu nhiên"
-            className={`flex h-9 w-9 items-center justify-center rounded-full transition ${
-              ui.shuffle
-                ? 'bg-[var(--surface-hover)] text-[var(--text-primary)]'
-                : 'text-[var(--text-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]'
-            }`}
-            style={ui.shuffle ? { color: userAccent.activeHex } : undefined}
-          >
-            <Shuffle className="h-4 w-4" />
-          </button>
+        {/* Left: Layout Sample 2 — strictly 5 transport controls: Shuffle | Previous | Play/Pause | Next | Playback Options */}
+        <div className="flex shrink-0 items-center gap-0.5 sm:gap-1" data-testid="mini-player-transport-bar">
+          <ShuffleButton
+            enabled={ui.shuffle}
+            accentColor={userAccent.activeHex}
+            onToggle={() => uiStore.toggleShuffle()}
+            size="sm"
+            testId="mini-player-shuffle-btn"
+          />
 
           <button
             type="button"
+            disabled={!hasTrack && !playback.canPrevious}
             onClick={() => uiStore.previousTrack()}
             title="Bài trước"
             aria-label="Bài trước"
-            className="flex h-9 w-9 items-center justify-center rounded-full text-[var(--text-secondary)] transition hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+            data-testid="mini-player-prev-btn"
+            className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--text-secondary)] transition hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] disabled:opacity-40 sm:h-9 sm:w-9"
           >
-            <SkipBack className="h-[18px] w-[18px]" />
+            <SkipBack className="h-[17px] w-[17px]" />
           </button>
 
           <button
@@ -123,6 +188,7 @@ export function MiniPlayer() {
             onClick={() => uiStore.togglePlayPause()}
             title={isPlaying ? 'Tạm dừng' : 'Phát nhạc'}
             aria-label={isPlaying ? 'Tạm dừng' : 'Phát nhạc'}
+            data-testid="mini-player-play-pause-btn"
             style={
               isLight
                 ? {
@@ -132,7 +198,7 @@ export function MiniPlayer() {
                   }
                 : undefined
             }
-            className={`flex h-11 w-11 items-center justify-center rounded-full transition hover:scale-105 active:scale-95 ${
+            className={`flex h-10 w-10 items-center justify-center rounded-full transition hover:scale-105 active:scale-95 sm:h-11 sm:w-11 ${
               isLight
                 ? ''
                 : 'bg-[#F5F6F8] text-[#090A0D] shadow-[0_6px_22px_rgba(255,255,255,0.22)]'
@@ -147,108 +213,98 @@ export function MiniPlayer() {
 
           <button
             type="button"
+            disabled={!hasTrack && !playback.canNext}
             onClick={() => uiStore.nextTrack()}
             title="Bài tiếp theo"
             aria-label="Bài tiếp theo"
-            className="flex h-9 w-9 items-center justify-center rounded-full text-[var(--text-secondary)] transition hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+            data-testid="mini-player-next-btn"
+            className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--text-secondary)] transition hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] disabled:opacity-40 sm:h-9 sm:w-9"
           >
-            <SkipForward className="h-[18px] w-[18px]" />
+            <SkipForward className="h-[17px] w-[17px]" />
           </button>
 
-          <button
-            type="button"
-            onClick={() => uiStore.cycleRepeat()}
-            title={`Lặp lại: ${ui.repeat === 'off' ? 'Tắt' : ui.repeat === 'all' ? 'Tất cả' : 'Một bài'}`}
-            aria-label="Chế độ lặp lại"
-            className={`flex h-9 w-9 items-center justify-center rounded-full transition ${
-              ui.repeat !== 'off'
-                ? 'bg-[var(--surface-hover)] text-[var(--text-primary)]'
-                : 'text-[var(--text-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]'
-            }`}
-            style={ui.repeat !== 'off' ? { color: userAccent.activeHex } : undefined}
-          >
-            {ui.repeat === 'one' ? (
-              <Repeat1 className="h-4 w-4" />
-            ) : (
-              <Repeat className="h-4 w-4" />
-            )}
-          </button>
+          <PlaybackOptionsPopover
+            repeatMode={ui.repeat}
+            autoNextEnabled={ui.autoNext}
+            remainingReplays={playback.remainingReplays}
+            hasActiveTrack={hasTrack}
+            accentColor={userAccent.activeHex}
+            onSelectRepeat={(mode) => uiStore.setRepeatMode(mode)}
+            onToggleAutoNext={() => uiStore.toggleAutoNext()}
+            size="sm"
+            placement="top"
+            testId="mini-player-options-btn"
+          />
         </div>
 
         {/* Center: Artwork + Title/Artist + Thin Interactive Progress */}
         <div className="flex min-w-0 flex-1 items-center gap-3.5 px-2">
           <button
             type="button"
-            onClick={() => uiStore.openNowPlaying()}
-            title="Mở màn hình Đang phát"
-            className="group relative h-11 w-11 shrink-0 overflow-hidden rounded-xl border border-[var(--border-glass)] shadow-md"
+            onClick={() => (hasTrack ? uiStore.openNowPlaying() : uiStore.openLibraryTab('songs'))}
+            title={hasTrack ? 'Mở màn hình Đang phát' : 'Mở Thư viện nhạc'}
+            className="group relative flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-[var(--border-glass)] bg-[var(--surface-glass-light)] shadow-md"
           >
-            <img
-              src={coverUrl}
-              alt={title}
-              data-testid="mini-player-artwork"
-              onError={(e) => {
-                const img = e.currentTarget;
-                if (img.dataset.fallbackApplied !== '1') {
-                  img.dataset.fallbackApplied = '1';
-                  img.src = DEFAULT_DOREMI_ARTWORK_URL;
-                }
-              }}
-              className="h-full w-full object-cover transition duration-300 group-hover:scale-105"
-            />
+            {hasTrack ? (
+              <img
+                src={coverUrl}
+                alt={title}
+                data-testid="mini-player-artwork"
+                onError={(e) => {
+                  const img = e.currentTarget;
+                  if (img.dataset.fallbackApplied !== '1') {
+                    img.dataset.fallbackApplied = '1';
+                    img.src = DEFAULT_DOREMI_ARTWORK_URL;
+                  }
+                }}
+                className="h-full w-full object-cover transition duration-300 group-hover:scale-105"
+              />
+            ) : (
+              <Disc3 className="h-5 w-5 text-[var(--text-muted)]" />
+            )}
           </button>
 
           <div className="min-w-0 flex-1">
             <div className="flex items-baseline justify-between gap-3">
               <button
                 type="button"
-                onClick={() => uiStore.openNowPlaying()}
+                onClick={() => (hasTrack ? uiStore.openNowPlaying() : uiStore.openLibraryTab('songs'))}
                 data-testid="mini-player-title"
+                title={title}
                 className="truncate text-left text-[13.5px] font-semibold text-[var(--text-primary)] hover:underline"
               >
                 {title}
               </button>
-              <span className="font-mono-tabular shrink-0 text-[11px] text-[var(--text-muted)]">
-                {formatDurationSeconds(currentTime)} / {formatDurationSeconds(duration)}
-              </span>
+              <MiniPlayerTimeReadout hasTrack={hasTrack} duration={duration} />
             </div>
 
             <div className="flex items-center justify-between gap-2">
               <button
                 type="button"
-                onClick={() => uiStore.openArtistDetail(artist)}
+                disabled={!hasTrack}
+                onClick={() => {
+                  if (hasTrack) uiStore.openArtistDetail(artist);
+                }}
                 data-testid="mini-player-artist"
-                className="truncate text-[12px] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                title={artist}
+                className="truncate text-[12px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] disabled:hover:text-[var(--text-secondary)]"
               >
                 {artist}
               </button>
-              <span className="hidden shrink-0 text-[10px] font-medium tracking-[0.04em] text-[var(--text-muted)] xl:inline">
+              <span
+                title={formatSummary}
+                className="font-mono-tabular hidden shrink-0 text-[10px] font-medium tracking-[0.04em] text-[var(--text-muted)] xl:inline"
+              >
                 {formatSummary}
               </span>
             </div>
 
-            {/* Thin progress bar */}
-            <div className="relative mt-1.5 flex items-center">
-              <div className="pointer-events-none h-[3px] w-full overflow-hidden rounded-full bg-[var(--slider-track)]">
-                <div
-                  className="h-full rounded-full transition-[width] duration-200"
-                  style={{
-                    width: `${progressPct}%`,
-                    backgroundColor: userAccent.activeHex,
-                  }}
-                />
-              </div>
-              <input
-                type="range"
-                min={0}
-                max={Math.max(1, duration)}
-                step={0.5}
-                value={Math.min(currentTime, Math.max(1, duration))}
-                onChange={(e) => uiStore.seek(Number(e.target.value))}
-                aria-label="Tua tiến độ phát nhạc"
-                className="absolute inset-0 h-3 w-full cursor-pointer opacity-0"
-              />
-            </div>
+            {/* Thin progress bar (isolated from outer MiniPlayer re-renders on timeupdate) */}
+            <MiniPlayerProgressBar
+              hasTrack={hasTrack}
+              duration={duration}
+              accentColor={userAccent.activeHex}
+            />
           </div>
         </div>
 
@@ -256,10 +312,13 @@ export function MiniPlayer() {
         <div className="flex shrink-0 items-center gap-1.5">
           <button
             type="button"
-            onClick={() => uiStore.toggleFavorite(activeTrackId)}
+            disabled={!hasTrack}
+            onClick={() => {
+              if (activeTrackId) void uiStore.toggleFavorite(activeTrackId);
+            }}
             title={isFavorite ? 'Bỏ yêu thích' : 'Yêu thích'}
             aria-label={isFavorite ? 'Bỏ yêu thích' : 'Yêu thích'}
-            className="flex h-9 w-9 items-center justify-center rounded-full text-[var(--text-secondary)] transition hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+            className="flex h-9 w-9 items-center justify-center rounded-full text-[var(--text-secondary)] transition hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] disabled:opacity-40"
           >
             <Heart
               className="h-4 w-4 transition"
@@ -316,7 +375,6 @@ export function MiniPlayer() {
               onMouseEnter={() => setIsVolumeHovered(true)}
               onMouseLeave={() => setIsVolumeHovered(false)}
             >
-              {/* Floating volume percentage tooltip */}
               {showVolumeTooltip && (
                 <div
                   role="tooltip"
@@ -328,7 +386,6 @@ export function MiniPlayer() {
                 </div>
               )}
 
-              {/* Contrast-safe unfilled rail + Theme Accent filled track */}
               <div
                 data-testid="mini-volume-track"
                 className="pointer-events-none h-[5px] w-full overflow-hidden rounded-full bg-[var(--volume-track-empty)] ring-1 ring-black/10"

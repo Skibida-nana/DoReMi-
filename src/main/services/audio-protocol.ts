@@ -1,6 +1,7 @@
 import { protocol } from 'electron';
 import {
   MEDIA_ARTWORK_HOST,
+  MEDIA_PLAYLIST_HOST,
   MEDIA_PROFILE_HOST,
   MEDIA_PROTOCOL_SCHEME,
 } from '../../shared/contracts/media-protocol';
@@ -9,6 +10,7 @@ import {
   resolveTrackMediaResponse,
   type AudioProtocolDeps,
 } from './audio-stream-handler';
+import type { PlaylistService } from './playlist-service';
 import type { ProfileService } from './profile-service';
 
 export { parseByteRangeHeader, resolveTrackMediaResponse } from './audio-stream-handler';
@@ -16,6 +18,7 @@ export type { AudioProtocolDeps, ByteRangeParseResult } from './audio-stream-han
 
 export interface MediaProtocolDeps extends AudioProtocolDeps {
   artworkService?: ArtworkService;
+  playlistService?: PlaylistService;
   profileService?: ProfileService;
 }
 
@@ -49,6 +52,9 @@ export function registerAudioProtocolHandler(deps: MediaProtocolDeps): void {
       const parsed = new URL(request.url);
       if (parsed.hostname === MEDIA_ARTWORK_HOST && deps.artworkService) {
         return deps.artworkService.resolveArtworkHttpResponse(request);
+      }
+      if (parsed.hostname === MEDIA_PLAYLIST_HOST && deps.playlistService) {
+        return deps.playlistService.resolvePlaylistMediaHttpResponse(request);
       }
       if (parsed.hostname === MEDIA_PROFILE_HOST && deps.profileService) {
         return deps.profileService.resolveProfileMediaHttpResponse(request);

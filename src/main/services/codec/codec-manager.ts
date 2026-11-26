@@ -34,6 +34,15 @@ import {
   isRecognizedPackLicenseFile,
   matchFilenameToCodecId,
 } from '../../../shared/utils/codec-registry';
+import {
+  type CodecExecutableInspector,
+  type CodecProcessAdapter,
+  defaultFsPathSafetyOps,
+  defaultNativeProcessAdapter,
+  type FsPathSafetyOps,
+  getStandardFoobarEncoderSearchDirs,
+  resolveDefaultBundledCodecsDir,
+} from './process-execution';
 
 const DEFAULT_PROBE_TIMEOUT_MS = 4500;
 const DEFAULT_REMOTE_TIMEOUT_MS = 6000;
@@ -164,6 +173,18 @@ export interface CodecManagerOptions {
   dnsResolver?: DnsResolverFn;
   /** Injectable HTTPS fetcher for deterministic offline testing (redirect/size/schema). */
   remoteFetcher?: RemoteManifestFetcherFn;
+  /** Injectable process runner for cross-platform mock CLI tests (`Phase 4.5B`). Production uses `defaultNativeProcessAdapter`. */
+  processAdapter?: CodecProcessAdapter;
+  /** Injectable binary header inspector for cross-platform tests (`Phase 4.5B`). Production uses `validateExecutableFileHeader`. */
+  executableInspector?: CodecExecutableInspector;
+  /** Injectable candidate filename extensions for test mock scripts (`Phase 4.5B`). Empty in production. */
+  mockCandidateExtensions?: readonly string[];
+  /** Injectable filesystem realpath/lstat ops for symlink/junction security tests (`Phase 4.5C`). */
+  fsPathOps?: FsPathSafetyOps;
+  /** Optional explicit external foobar2000/user encoder directories (evaluated via strict Trust Policy). */
+  externalPackDirs?: readonly string[];
+  /** When true, also inspects fixed standard Windows foobar2000 encoder paths (`allowExternal` trust still required). */
+  allowStandardFoobarPaths?: boolean;
 }
 
 export interface CustomBinaryImportOptions {
@@ -819,8 +840,10 @@ async function probeBinaryVersion(params: {
   entry: CodecManifestEntry;
   platform: NodeJS.Platform;
   timeoutMs: number;
+  processAdapter?: CodecProcessAdapter;
 }): Promise<{ ok: boolean; version: string | null; exitCode: number | null; error?: string }> {
   const { executablePath, entry, platform, timeoutMs } = params;
+  const runner = params.processAdapter ?? defaultNativeProcessAdapter;
   if (entry.versionArgs.length === 0) {
     return { ok: true, version: 'Built-in', exitCode: 0 };
   }
@@ -835,8 +858,7 @@ async function probeBinaryVersion(params: {
 
     let child: ReturnType<typeof spawn>;
     try {
-      child = spawn(executablePath, [...entry.versionArgs], {
-        shell: false,
+      child = runner.spawn(executablePath, [...entry.versionArgs], {
         windowsHide: true,
         cwd: path.dirname(executablePath),
         env: buildSanitizedProbeEnv(platform),
@@ -896,11 +918,12 @@ async function probeBinaryVersion(params: {
         const parsed = parseVersionFromOutput(combined);
 
         if (code === null || !acceptedExitCodes.has(code)) {
+          const detailSuffix = combined ? `: ${combined.slice(0, 220)}` : '';
           resolve({
             ok: false,
             version: null,
             exitCode: code,
-            error: `Binary trả về mã thoát không hợp lệ (${String(code)}).`,
+            error: `Binary trả về mã thoát không hợp lệ (${String(code)})${detailSuffix}.`,
           });
           return;
         }
@@ -960,10 +983,11 @@ async function dirExists(targetPath: string): Promise<boolean> {
 export async function isRealPathStrictlyWithinDirectory(
   candidatePath: string,
   baseDir: string,
+  fsOps: FsPathSafetyOps = defaultFsPathSafetyOps,
 ): Promise<{ safe: boolean; realCandidate?: string; realBase?: string; reason?: string }> {
   try {
-    const realBase = await fs.realpath(baseDir);
-    const realCandidate = await fs.realpath(candidatePath);
+    const realBase = await fsOps.realpath(baseDir);
+    const realCandidate = await fsOps.realpath(candidatePath);
     const sep = path.sep === '\\' ? '\\' : '/';
     if (!isPathStrictlyWithinDirectory(realCandidate, realBase, sep)) {
       return {
@@ -1163,6 +1187,11 @@ export class CodecManager {
   private readonly remoteTimeoutMs: number;
   private readonly dnsResolver: DnsResolverFn;
   private readonly remoteFetcher: RemoteManifestFetcherFn;
+  private readonly processAdapter: CodecProcessAdapter;
+  private readonly executableInspector: CodecExecutableInspector;
+  private readonly mockCandidateExtensions: string[];
+  private readonly fsPathOps: FsPathSafetyOps;
+  private readonly externalPackDirs: string[];
 
   private discoveryPolicy: CodecDiscoveryPolicy;
   private cachedInventory: CodecInventorySnapshot | null = null;
@@ -1196,6 +1225,31 @@ export class CodecManager {
     this.remoteTimeoutMs = options.remoteTimeoutMs ?? DEFAULT_REMOTE_TIMEOUT_MS;
     this.dnsResolver = options.dnsResolver ?? defaultDnsResolver;
     this.remoteFetcher = options.remoteFetcher ?? defaultPinnedHttpsFetcher;
+    this.processAdapter = options.processAdapter ?? defaultNativeProcessAdapter;
+    this.executableInspector =
+      options.executableInspector ??
+      ((filePath, platform, opts) => validateExecutableFileHeader(filePath, platform, opts));
+    this.mockCandidateExtensions = [...(options.mockCandidateExtensions ?? [])].map((ext) =>
+      ext.startsWith('.') ? ext.toLowerCase() : `.${ext.toLowerCase()}`,
+    );
+    this.fsPathOps = options.fsPathOps ?? defaultFsPathSafetyOps;
+
+    const extDirs: string[] = [];
+    if (options.externalPackDirs) {
+      for (const dir of options.externalPackDirs) {
+        if (dir && dir.trim()) extDirs.push(path.resolve(dir));
+      }
+    }
+    if (options.allowStandardFoobarPaths) {
+      extDirs.push(...getStandardFoobarEncoderSearchDirs(this.platform));
+    }
+    const seenExt = new Set<string>();
+    this.externalPackDirs = extDirs.filter((d) => {
+      const k = this.platform === 'win32' ? d.toLowerCase() : d;
+      if (seenExt.has(k)) return false;
+      seenExt.add(k);
+      return true;
+    });
 
     // Security default: allowSystemPathLookup = false; Power Saving default: maxProbeConcurrency = 1
     this.discoveryPolicy = {
@@ -1208,10 +1262,17 @@ export class CodecManager {
       deferProbeWhenPlaybackActive: options.discoveryPolicy?.deferProbeWhenPlaybackActive ?? false,
     };
 
-    const platformSubdir = `${this.platform}-${this.arch}`;
     this.bundledDir = options.bundledResourcesDir
       ? path.resolve(options.bundledResourcesDir)
-      : path.resolve(process.cwd(), 'resources', 'codecs', platformSubdir);
+      : resolveDefaultBundledCodecsDir({ platform: this.platform, arch: this.arch });
+  }
+
+  getProcessAdapter(): CodecProcessAdapter {
+    return this.processAdapter;
+  }
+
+  getBundledDirectory(): string {
+    return this.bundledDir;
   }
 
   getCodecsRootDirectory(): string {
@@ -1370,9 +1431,38 @@ export class CodecManager {
   }
 
   private getCandidateNames(entry: CodecManifestEntry): string[] {
-    return this.platform === 'win32'
-      ? [...entry.winExecutableNames]
-      : [...entry.posixExecutableNames, ...entry.winExecutableNames];
+    const nativeNames =
+      this.platform === 'win32'
+        ? [...entry.winExecutableNames]
+        : [...entry.posixExecutableNames, ...entry.winExecutableNames];
+
+    if (this.mockCandidateExtensions.length === 0) {
+      return nativeNames;
+    }
+
+    const withMocks = new Set<string>(nativeNames);
+    for (const baseName of [...entry.posixExecutableNames, ...entry.winExecutableNames]) {
+      const stem = baseName.replace(/\.[^.]+$/, '');
+      for (const ext of this.mockCandidateExtensions) {
+        withMocks.add(`${stem}${ext}`);
+      }
+    }
+    return Array.from(withMocks);
+  }
+
+  private matchCandidateFileToCodecId(fileName: string): CodecId | null {
+    const direct = matchFilenameToCodecId(fileName);
+    if (direct) return direct;
+    if (this.mockCandidateExtensions.length === 0) return null;
+    const lower = fileName.trim().toLowerCase();
+    for (const ext of this.mockCandidateExtensions) {
+      if (lower.endsWith(ext) && lower.length > ext.length) {
+        const stripped = lower.slice(0, -ext.length);
+        const matched = matchFilenameToCodecId(stripped);
+        if (matched) return matched;
+      }
+    }
+    return null;
   }
 
   private async findInDirectory(dir: string, names: readonly string[]): Promise<string | null> {
@@ -1389,7 +1479,7 @@ export class CodecManager {
     for (const name of names) {
       const match = lowerMap.get(name.toLowerCase());
       if (match) {
-        const confined = await isRealPathStrictlyWithinDirectory(match, dir);
+        const confined = await isRealPathStrictlyWithinDirectory(match, dir, this.fsPathOps);
         if (confined.safe) {
           return match;
         }
@@ -1447,14 +1537,14 @@ export class CodecManager {
   ): Promise<{ inspection: CodecBinaryInspectionResult; sha256: string | null; fileSignature: string | null }> {
     const stat = await fs.stat(filePath).catch(() => null);
     if (!stat || !stat.isFile()) {
-      const inspection = await validateExecutableFileHeader(filePath, this.platform, {
+      const inspection = await this.executableInspector(filePath, this.platform, {
         hostArch: this.arch,
         allowPosixScripts: this.allowPosixTestScripts,
       });
       return { inspection, sha256: null, fileSignature: null };
     }
 
-    const canonicalPath = await fs.realpath(filePath).catch(() => path.resolve(filePath));
+    const canonicalPath = await this.fsPathOps.realpath(filePath).catch(() => path.resolve(filePath));
     const fileSignature = `${canonicalPath}|${stat.size}|${stat.mtimeMs}|${stat.ctimeMs}|${stat.ino}`;
 
     const cached = this.fileVerificationCache.get(canonicalPath);
@@ -1472,7 +1562,7 @@ export class CodecManager {
       };
     }
 
-    const inspection = await validateExecutableFileHeader(canonicalPath, this.platform, {
+    const inspection = await this.executableInspector(canonicalPath, this.platform, {
       hostArch: this.arch,
       allowPosixScripts: this.allowPosixTestScripts,
     });
@@ -1506,6 +1596,7 @@ export class CodecManager {
   private async checkRequiredDependencies(
     entry: CodecManifestEntry,
     executablePath: string,
+    executableArch?: CodecBinaryArchitecture,
   ): Promise<string[]> {
     if (entry.requiredDependencies.length === 0) {
       return [];
@@ -1518,16 +1609,20 @@ export class CodecManager {
       const programFiles = process.env.ProgramFiles;
       const programFilesX86 = process.env['ProgramFiles(x86)'];
       const systemRoot = process.env.SystemRoot;
-      if (programFiles) {
+      if (executableArch !== 'x86' && programFiles) {
         searchDirs.push(path.join(programFiles, 'Common Files', 'Apple', 'Apple Application Support'));
       }
-      if (programFilesX86) {
+      if (executableArch !== 'x64' && programFilesX86) {
         searchDirs.push(
           path.join(programFilesX86, 'Common Files', 'Apple', 'Apple Application Support'),
         );
       }
       if (systemRoot) {
-        searchDirs.push(path.join(systemRoot, 'System32'), path.join(systemRoot, 'SysWOW64'));
+        searchDirs.push(
+          executableArch === 'x86'
+            ? path.join(systemRoot, 'SysWOW64')
+            : path.join(systemRoot, 'System32'),
+        );
       }
     }
 
@@ -1537,17 +1632,28 @@ export class CodecManager {
 
       const dirsToCheck = dep.kind === 'supporting-dll' ? [execDir, ...this.dependencySearchDirs] : searchDirs;
       let foundValid = false;
+      let archMismatchNote: string | null = null;
 
       for (const dir of dirsToCheck) {
         const candidate = await this.findInDirectory(dir, [dep.name]);
         if (!candidate) continue;
 
         if (dep.name.toLowerCase().endsWith('.dll')) {
-          const dllCheck = await validateExecutableFileHeader(candidate, this.platform, {
+          const dllCheck = await this.executableInspector(candidate, this.platform, {
             hostArch: this.arch,
             expectDll: true,
           });
           if (dllCheck.valid && dllCheck.isPeDll) {
+            if (
+              this.platform === 'win32' &&
+              executableArch &&
+              executableArch !== 'unknown' &&
+              dllCheck.architecture !== 'unknown' &&
+              dllCheck.architecture !== executableArch
+            ) {
+              archMismatchNote = `${dep.name} (lệch kiến trúc ${dllCheck.architecture} vs ${executableArch})`;
+              continue;
+            }
             foundValid = true;
             break;
           }
@@ -1558,7 +1664,7 @@ export class CodecManager {
       }
 
       if (!foundValid) {
-        missing.push(dep.name);
+        missing.push(archMismatchNote ?? dep.name);
       }
     }
 
@@ -1604,7 +1710,17 @@ export class CodecManager {
       candidates.push({ tier: 'bundled', path: fromBundled });
     }
 
-    // Tier 4: System PATH (disabled by default; strictly opt-in)
+    // Tier 4a: Known / configured external foobar2000 Free Encoder Pack directories
+    // Evaluated under Trust Policy ('system' tier: NEVER executes unconsented binaries without verified hash)
+    for (const extDir of this.externalPackDirs) {
+      const fromExt = await this.findInDirectory(extDir, candidateNames);
+      if (fromExt) {
+        candidates.push({ tier: 'system', path: fromExt });
+        break;
+      }
+    }
+
+    // Tier 4b: System PATH (disabled by default; strictly opt-in)
     if (this.discoveryPolicy.allowSystemPathLookup) {
       const fromSystem = await this.findInSystemPath(candidateNames);
       if (fromSystem) {
@@ -1694,8 +1810,12 @@ export class CodecManager {
       base.checksumVerified = true;
     }
 
-    // 3. Required dependency verification
-    const missingDeps = await this.checkRequiredDependencies(entry, candidatePath);
+    // 3. Required dependency verification (matching executable PE architecture)
+    const missingDeps = await this.checkRequiredDependencies(
+      entry,
+      candidatePath,
+      inspection.architecture,
+    );
     base.missingDependencies = missingDeps;
     if (missingDeps.length > 0) {
       base.status = 'missing-dependency';
@@ -1777,6 +1897,7 @@ export class CodecManager {
       entry,
       platform: this.platform,
       timeoutMs: this.probeTimeoutMs,
+      processAdapter: this.processAdapter,
     });
 
     if (!probe.ok) {
@@ -2086,7 +2207,7 @@ export class CodecManager {
         const candidate = path.resolve(customDir, path.basename(customRecord.fileName));
         if (
           (await fileExists(candidate)) &&
-          (await isRealPathStrictlyWithinDirectory(candidate, customDir)).safe
+          (await isRealPathStrictlyWithinDirectory(candidate, customDir, this.fsPathOps)).safe
         ) {
           targetPath = candidate;
         }
@@ -2149,7 +2270,7 @@ export class CodecManager {
       if (!params.userConfirmed) {
         throw new Error('Yêu cầu xác nhận đồng ý rõ ràng từ người dùng.');
       }
-      const canonical = await fs.realpath(executablePath);
+      const canonical = await this.fsPathOps.realpath(executablePath);
       const { inspection, sha256 } = await this.inspectAndHashBinary(canonical);
       if (!inspection.valid || !sha256) {
         throw new Error(inspection.reason ?? 'System binary không hợp lệ.');
@@ -2219,16 +2340,16 @@ export class CodecManager {
         const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
         for (const entry of entries) {
           const full = path.join(dir, entry.name);
-          const confined = await isRealPathStrictlyWithinDirectory(full, realSourceDir);
+          const confined = await isRealPathStrictlyWithinDirectory(full, realSourceDir, this.fsPathOps);
           if (!confined.safe) {
             errors.push(`Bỏ qua đường dẫn vượt phạm vi thư mục nguồn: ${entry.name}`);
             continue;
           }
-          const lstat = await fs.stat(full).catch(() => null);
-          if (!lstat) continue;
-          if (lstat.isFile()) {
+          const statItem = await this.fsPathOps.stat(full);
+          if (!statItem) continue;
+          if (statItem.isFile()) {
             discoveredFiles.push({ fullPath: full, fileName: entry.name });
-          } else if (lstat.isDirectory()) {
+          } else if (statItem.isDirectory()) {
             await scanDir(full, depth + 1);
           }
         }
@@ -2256,7 +2377,7 @@ export class CodecManager {
 
         if (lower.endsWith('.dll') && SUPPORTING_DLL_ALLOWLIST.has(lower)) {
           if (!seenDllNames.has(lower)) {
-            const dllCheck = await validateExecutableFileHeader(item.fullPath, this.platform, {
+            const dllCheck = await this.executableInspector(item.fullPath, this.platform, {
               hostArch: this.arch,
               expectDll: true,
             });
@@ -2270,7 +2391,7 @@ export class CodecManager {
           continue;
         }
 
-        const codecId = matchFilenameToCodecId(item.fileName);
+        const codecId = this.matchCandidateFileToCodecId(item.fileName);
         if (!codecId) {
           skippedCount += 1;
           continue;
@@ -2383,6 +2504,7 @@ export class CodecManager {
                 entry: manifestEntry,
                 platform: this.platform,
                 timeoutMs: this.probeTimeoutMs,
+                processAdapter: this.processAdapter,
               });
               packCodecVersions[bin.codecId] = probe.ok ? probe.version : null;
             }
@@ -2628,6 +2750,7 @@ export class CodecManager {
             entry: manifestEntry,
             platform: this.platform,
             timeoutMs: this.probeTimeoutMs,
+            processAdapter: this.processAdapter,
           });
           if (!probe.ok) {
             throw new Error(probe.error ?? 'Kiểm tra sức khỏe Custom Codec trong staging thất bại.');

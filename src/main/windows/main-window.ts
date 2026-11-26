@@ -2,7 +2,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { BrowserWindow } from 'electron';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const moduleDirname = path.dirname(fileURLToPath(import.meta.url));
 
 /**
  * Creates the hardened main desktop BrowserWindow for Lossless Player:
@@ -12,7 +12,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
  * - Blocks popup windows and external navigation
  */
 export function createMainWindow(): BrowserWindow {
-  const preloadPath = path.join(__dirname, '../preload/index.cjs');
+  const preloadPath = path.join(moduleDirname, '../preload/index.cjs');
 
   const mainWindow = new BrowserWindow({
     width: 1280,
@@ -35,7 +35,9 @@ export function createMainWindow(): BrowserWindow {
   });
 
   mainWindow.once('ready-to-show', () => {
-    mainWindow.show();
+    if (process.env.DOREMI_SMOKE_TEST !== '1') {
+      mainWindow.show();
+    }
   });
 
   // Strictly block opening new browser windows or external popups
@@ -55,7 +57,7 @@ export function createMainWindow(): BrowserWindow {
     if (rendererUrl) {
       void mainWindow.loadURL(rendererUrl);
     } else {
-      const indexHtmlPath = path.join(__dirname, '../renderer/index.html');
+      const indexHtmlPath = path.join(moduleDirname, '../renderer/index.html');
       void mainWindow.loadFile(indexHtmlPath);
     }
   }

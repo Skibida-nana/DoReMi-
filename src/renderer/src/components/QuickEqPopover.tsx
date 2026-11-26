@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { ArrowUpRight, Check, SlidersHorizontal } from 'lucide-react';
 import {
   getActiveSlotConfig,
   getAllPresets,
 } from '../../../shared/utils/audio-dsp';
 import { uiStore, useUiState } from '../stores/ui-store';
+import { AnchoredPopover } from './OverlayLayer';
 import { ToggleSwitch } from './ToggleSwitch';
 
 export interface QuickEqPopoverProps {
@@ -15,7 +16,7 @@ export interface QuickEqPopoverProps {
 export function QuickEqPopover({ accentHex, accentGlowRgb }: QuickEqPopoverProps) {
   useUiState();
   const [open, setOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
 
   const audioLab = uiStore.getAudioLabSettings();
   const activeSlot = getActiveSlotConfig(audioLab);
@@ -25,31 +26,10 @@ export function QuickEqPopover({ accentHex, accentGlowRgb }: QuickEqPopoverProps
     [presets, activeSlot.activePresetId],
   );
 
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-    const handleClickOutside = (event: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [open]);
-
   return (
-    <div ref={containerRef} className="relative">
+    <div className="relative">
       <button
+        ref={triggerRef}
         type="button"
         data-testid="now-playing-quick-eq-btn"
         aria-label="Mở nhanh Equalizer (Audio Lab)"
@@ -75,13 +55,17 @@ export function QuickEqPopover({ accentHex, accentGlowRgb }: QuickEqPopoverProps
         <span>EQ</span>
       </button>
 
-      {open && (
-        <div
-          role="dialog"
-          aria-label="Điều khiển nhanh Equalizer"
-          data-testid="now-playing-quick-eq-popover"
-          className="lp-glass-pill absolute right-0 bottom-11 z-40 w-[292px] rounded-2xl p-3.5 text-[var(--text-primary)] shadow-2xl"
-        >
+      <AnchoredPopover
+        open={open}
+        anchorRef={triggerRef}
+        onClose={() => setOpen(false)}
+        placement="top"
+        align="end"
+        role="dialog"
+        ariaLabel="Điều khiển nhanh Equalizer"
+        testId="now-playing-quick-eq-popover"
+        className="lp-glass-pill w-[292px] rounded-2xl p-3.5 text-[var(--text-primary)] shadow-2xl"
+      >
           {/* Header: EQ On/Off + Active Preset */}
           <div className="flex items-center justify-between gap-3 border-b border-[var(--border-subtle)] pb-3">
             <div className="min-w-0">
@@ -187,8 +171,7 @@ export function QuickEqPopover({ accentHex, accentGlowRgb }: QuickEqPopoverProps
             <span>Mở Audio Lab</span>
             <ArrowUpRight className="h-3.5 w-3.5" style={{ color: accentHex }} />
           </button>
-        </div>
-      )}
+      </AnchoredPopover>
     </div>
   );
 }

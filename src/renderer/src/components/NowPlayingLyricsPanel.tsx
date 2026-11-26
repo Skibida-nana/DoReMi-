@@ -82,10 +82,10 @@ export const NowPlayingLyricsPanel = memo(function NowPlayingLyricsPanel({
                 const lineOpacity = isActive
                   ? 1
                   : dist === 1
-                    ? 0.72
+                    ? 0.78
                     : dist === 2
-                      ? 0.54
-                      : 0.36;
+                      ? 0.62
+                      : 0.46;
 
                 return (
                   <button
@@ -139,7 +139,11 @@ export const NowPlayingLyricsPanel = memo(function NowPlayingLyricsPanel({
               type="button"
               data-testid="btn-resync-lyrics"
               onClick={onResyncLyrics}
-              className="lp-glass-pill absolute bottom-3 left-0 flex items-center gap-2 rounded-full px-3.5 py-1.5 text-[12px] font-medium text-[var(--text-primary)] transition hover:bg-[var(--surface-hover)]"
+              style={{
+                backgroundColor: 'var(--np-btn-primary-bg, var(--np-text-primary))',
+                color: 'var(--np-btn-primary-fg, var(--np-bg))',
+              }}
+              className="absolute bottom-3 left-0 flex items-center gap-2 rounded-full px-3.5 py-1.5 text-[12px] font-semibold shadow-md transition hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2"
             >
               <span
                 className="h-2 w-2 rounded-full"
@@ -169,13 +173,19 @@ export const NowPlayingLyricsPanel = memo(function NowPlayingLyricsPanel({
           data-testid="lyrics-empty-state"
           className="flex flex-1 flex-col items-start justify-center py-6"
         >
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-[var(--np-divider)] text-[var(--np-text-muted)]">
+          <div
+            className="flex h-10 w-10 items-center justify-center rounded-xl border text-[var(--np-text-primary)]"
+            style={{
+              borderColor: 'var(--np-divider)',
+              backgroundColor: 'var(--np-btn-ghost-bg)',
+            }}
+          >
             <FileText className="h-4.5 w-4.5" />
           </div>
           <p className="mt-3 text-[16px] font-semibold text-[var(--np-text-primary)]">
             Chưa có lời bài hát
           </p>
-          <p className="mt-1 max-w-[320px] text-[13px] leading-relaxed text-[var(--np-text-muted)]">
+          <p className="mt-1 max-w-[320px] text-[13px] leading-relaxed text-[var(--np-text-secondary)]">
             Thêm lời LRC đồng bộ hoặc nhập file .lrc / .txt trực tiếp từ máy tính.
           </p>
           <div className="mt-4 flex flex-wrap items-center gap-2.5">
@@ -183,7 +193,11 @@ export const NowPlayingLyricsPanel = memo(function NowPlayingLyricsPanel({
               type="button"
               data-testid="btn-empty-add-lyrics"
               onClick={onOpenLyricsEditor}
-              className="flex h-9 items-center gap-1.5 rounded-full bg-[var(--np-text-primary)] px-4 text-[12.5px] font-semibold text-[var(--np-bg)] transition hover:opacity-90"
+              style={{
+                backgroundColor: 'var(--np-btn-primary-bg, var(--np-text-primary))',
+                color: 'var(--np-btn-primary-fg, var(--np-bg))',
+              }}
+              className="flex h-9 items-center gap-1.5 rounded-full px-4 text-[12.5px] font-semibold shadow-sm transition hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2"
             >
               <Plus className="h-3.5 w-3.5" />
               <span>Thêm lời bài hát</span>
@@ -191,7 +205,12 @@ export const NowPlayingLyricsPanel = memo(function NowPlayingLyricsPanel({
             <button
               type="button"
               onClick={onImportLyricsFile}
-              className="lp-btn-ghost flex h-9 items-center gap-1.5 rounded-full px-4 text-[12px] font-medium text-[var(--np-text-primary)]"
+              style={{
+                backgroundColor: 'var(--np-btn-ghost-bg)',
+                color: 'var(--np-btn-ghost-fg, var(--np-text-primary))',
+                borderColor: 'var(--np-btn-ghost-border, var(--np-divider))',
+              }}
+              className="flex h-9 items-center gap-1.5 rounded-full border px-4 text-[12px] font-medium backdrop-blur-xs transition hover:brightness-95 focus-visible:outline-2 focus-visible:outline-offset-2"
             >
               <Upload className="h-3.5 w-3.5" />
               <span>Nhập file .lrc / .txt</span>

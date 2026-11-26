@@ -645,7 +645,7 @@ export function buildConversionCommandPlan(
           if (commonTags.album) flacArgs.push(`--tag=ALBUM=${commonTags.album}`);
           if (commonTags.date) flacArgs.push(`--tag=DATE=${commonTags.date}`);
         }
-        flacArgs.push('-o', input.outputPath, '-');
+        flacArgs.push('--ignore-chunk-sizes', '-o', input.outputPath, '-');
         const steps: ConversionPipelineStep[] = [
           buildFfmpegPipeDecoder(false),
           { codecId: 'flac', executableName: 'flac', args: flacArgs },
@@ -985,15 +985,23 @@ export function buildConversionCommandPlan(
 
     // 6. Native Reference ALAC (refalac64 — preferred standalone ALAC encoder before QAAC)
     if (opts.targetFormat === 'alac' && has('refalac')) {
-      const refalacArgs: string[] = [];
+      const refalacArgs: string[] =
+        opts.sampleRateHz === 'source'
+          ? ['--rate', 'keep']
+          : ['--rate', String(opts.sampleRateHz)];
+      if (opts.bitDepth === 16 || opts.bitDepth === 24) {
+        refalacArgs.push('--bits-per-sample', String(opts.bitDepth));
+      }
       if (opts.preserveMetadata) {
         if (commonTags.title) refalacArgs.push('--title', commonTags.title);
         if (commonTags.artist) refalacArgs.push('--artist', commonTags.artist);
         if (commonTags.album) refalacArgs.push('--album', commonTags.album);
         if (commonTags.date) refalacArgs.push('--date', commonTags.date);
+        if (commonTags.track) refalacArgs.push('--track', commonTags.track);
+        if (commonTags.genre) refalacArgs.push('--genre', commonTags.genre);
       }
       notes.push(
-        'Sử dụng Reference ALAC (refalac64) độc lập — không phụ thuộc Apple CoreAudioToolbox (cờ Windows CLI: Pending Desktop Verification).',
+        'Sử dụng Reference ALAC (refalac64) độc lập (--rate keep) — không phụ thuộc Apple CoreAudioToolbox và tách biệt hoàn toàn với ALAC WASM Decoder.',
       );
 
       if (srcExt === '.wav' && !needsResampleOrMix) {

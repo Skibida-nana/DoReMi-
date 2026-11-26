@@ -6,9 +6,18 @@ import type {
 import type { VerifyTrackResult } from '../../../shared/types/library';
 import type {
   AudioEngineController,
+  PlaybackContextDescriptor,
+  PlaybackControlState,
+  PlaybackErrorDetails,
+  PlaybackQueueEntry,
+  PlaybackQueueState,
   PlaybackState,
   PlaybackStatus,
+  RepeatMode,
 } from '../../../shared/types/player';
+import {
+  PlaybackQueueController,
+} from './playback-queue';
 import type {
   FadeDurationSec,
   ListeningSessionInput,
@@ -16,11 +25,11 @@ import type {
 } from '../../../shared/types/stage5';
 import type {
   ComputedReplayGain,
+  DiagnosticRecordInput,
   ReplayGainSettings,
   TrackReplayGainMetadata,
 } from '../../../shared/types/stage6';
 import type { TrackRecord } from '../../../shared/types/track';
-import { classifyTrackAudioCodec } from '../../../shared/utils/audio-codec';
 import {
   DEFAULT_REPLAYGAIN_SETTINGS,
   computeReplayGainMultiplier,
@@ -31,6 +40,10 @@ import {
   createBrowserAudioContextFactory,
   type AudioContextFactory,
 } from './audio-dsp';
+import {
+  buildPlaybackErrorDetails,
+  type MediaErrorContext,
+} from './playback-error';
 
 export interface MediaErrorLike {
   readonly code: number;
@@ -66,6 +79,11 @@ export interface AudioEngineDependencies {
   verifyTrack?: (trackId: string) => Promise<VerifyTrackResult>;
   onTrackMissing?: (trackId: string) => void;
   onSessionCheckpoint?: (session: ListeningSessionInput) => void;
+  onDiagnostic?: (entry: DiagnosticRecordInput) => void;
+  /** Optional shared queue controller (Single Source of Truth across app UI & engine) */
+  queueController?: PlaybackQueueController;
+  /** Optional callback when auto-advance / next / prev lands on a track outside local TrackRecord catalog */
+  onExternalEntryActivated?: (entry: PlaybackQueueEntry) => Promise<void> | void;
   /** Optional step interval override in ms for deterministic unit tests (default: 24ms) */
   fadeStepMs?: number;
   /** Optional clock override in ms for deterministic unit tests */
@@ -113,38 +131,6 @@ function extractTrackReplayGainMeta(track: TrackRecord | null): TrackReplayGainM
   return { trackGainDb, albumGainDb, trackPeak, albumPeak };
 }
 
-function describeMediaError(error: MediaErrorLike | null, track: TrackRecord | null): string {
-  const classified = track ? classifyTrackAudioCodec(track) : null;
-  const formatHint = classified
-    ? classified.isM4aContainer
-      ? `${classified.displayCodec} (${classified.qualityLabel})`
-      : classified.displayCodec
-    : track?.container ?? track?.codec ?? '';
-
-  if (!error) {
-    return 'Không thể phát file âm thanh này.';
-  }
-
-  switch (error.code) {
-    case 1:
-      return 'Quá trình tải âm thanh đã bị hủy.';
-    case 2:
-      return 'Không thể đọc luồng dữ liệu âm thanh cục bộ. Kiểm tra xem file gốc còn tồn tại không.';
-    case 3:
-      return `Lỗi giải mã dữ liệu âm thanh${formatHint ? ` (${formatHint})` : ''}. File có thể bị hỏng.`;
-    case 4:
-      if (classified?.family === 'alac') {
-        return 'Không thể giải mã luồng ALAC (Apple Lossless) từ file M4A này. Hãy kiểm tra file gốc hoặc thử mở lại ứng dụng.';
-      }
-      if (classified?.family === 'aac') {
-        return 'Bộ giải mã hệ thống hiện tại không phát được luồng AAC trong file M4A này hoặc file bị hỏng.';
-      }
-      return `Định dạng hoặc codec${formatHint ? ` (${formatHint})` : ''} không được trình phát hỗ trợ, hoặc file gốc không còn tồn tại.`;
-    default:
-      return error.message || 'Đã xảy ra lỗi không xác định khi phát nhạc.';
-  }
-}
-
 interface ActiveListeningSession {
   sessionId: string;
   track: TrackRecord;
@@ -174,22 +160,45 @@ export class AudioEngine implements AudioEngineController {
   private readonly verifyTrackFn?: (trackId: string) => Promise<VerifyTrackResult>;
   private readonly onTrackMissingFn?: (trackId: string) => void;
   private readonly onSessionCheckpointFn?: (session: ListeningSessionInput) => void;
+  private readonly onDiagnosticFn?: (entry: DiagnosticRecordInput) => void;
+  private readonly onExternalEntryActivatedFn?: (
+    entry: PlaybackQueueEntry,
+  ) => Promise<void> | void;
   private readonly fadeStepMs: number;
   private readonly nowMs: () => number;
   private readonly listeners = new Set<(state: PlaybackState) => void>();
+  private readonly coreListeners = new Set<(state: PlaybackState) => void>();
   private readonly dspListeners = new Set<(snapshot: AudioDspRuntimeSnapshot) => void>();
+  readonly queueController: PlaybackQueueController;
 
-  private queue: TrackRecord[] = [];
+  private trackCatalog = new Map<string, TrackRecord>();
+  private trackCatalogOrder: TrackRecord[] = [];
   private currentTrackId: string | null = null;
+  private currentTrackSnapshot: TrackRecord | null = null;
+  private currentQueueEntryId: string | null = null;
   private status: PlaybackStatus = 'idle';
   private currentTimeSeconds = 0;
   private durationSeconds = 0;
   private volume = DEFAULT_VOLUME;
   private muted = false;
   private errorMessage: string | null = null;
+  private playbackError: PlaybackErrorDetails | null = null;
   private playRequestSeq = 0;
+  private playbackGeneration = 0;
+  private endedHandledGeneration = 0;
+  private currentAttemptId = 'pb-init';
+  private activeAudioSrc: string | null = null;
+  private switchingTrack = false;
+  private inAudioPlayCall = false;
+  private currentAttemptFromAutoAdvance = false;
+  private currentAttemptStartedPlaying = false;
+  private lastLoggedFailureAttemptId: string | null = null;
   private cachedSnapshot: PlaybackState;
+  private cachedCoreSnapshot: PlaybackState;
+  private cachedCanNext = false;
+  private canNextDirty = true;
   private cachedDspSnapshot: AudioDspRuntimeSnapshot;
+  private unsubscribeQueueController: (() => void) | null = null;
 
   // Stage 5: Fade In/Out transition state (never mutates `this.volume`)
   private transitionConfig: PlaybackTransitionSettings = {
@@ -247,12 +256,30 @@ export class AudioEngine implements AudioEngineController {
     this.verifyTrackFn = deps.verifyTrack;
     this.onTrackMissingFn = deps.onTrackMissing;
     this.onSessionCheckpointFn = deps.onSessionCheckpoint;
+    this.onDiagnosticFn = deps.onDiagnostic;
+    this.onExternalEntryActivatedFn = deps.onExternalEntryActivated;
     this.fadeStepMs = Math.max(8, deps.fadeStepMs ?? 24);
     this.nowMs = deps.nowMs ?? (() => Date.now());
 
+    this.queueController =
+      deps.queueController ??
+      new PlaybackQueueController({
+        isTrackPlayable: (trackId) => this.isLocalTrackPlayable(trackId),
+      });
+    this.unsubscribeQueueController = this.queueController.subscribe(() => {
+      this.canNextDirty = true;
+      this.emitState();
+    });
+
     this.bindAudioEvents();
     this.cachedSnapshot = this.buildSnapshot();
+    this.cachedCoreSnapshot = this.cachedSnapshot;
     this.cachedDspSnapshot = this.dsp.getRuntimeSnapshot();
+  }
+
+  private isLocalTrackPlayable(trackId: string): boolean {
+    const track = this.trackCatalog.get(trackId);
+    return Boolean(track && track.status === 'available');
   }
 
   // ---------------------------------------------------------------------------
@@ -340,6 +367,8 @@ export class AudioEngine implements AudioEngineController {
     this.cancelActiveFade(true);
     this.audio.pause();
     this.dsp.dispose();
+    this.unsubscribeQueueController?.();
+    this.unsubscribeQueueController = null;
     this.listeners.clear();
     this.dspListeners.clear();
   }
@@ -370,18 +399,45 @@ export class AudioEngine implements AudioEngineController {
     return { ...this.transitionConfig };
   }
 
-  setQueue(tracks: TrackRecord[]): void {
-    this.queue = [...tracks];
-    // Refresh current track metadata if it was updated (e.g. marked missing or ReplayGain rescanned)
+  syncTrackCatalog(tracks: TrackRecord[]): void {
+    this.canNextDirty = true;
+    const prevTrackIds = new Set(this.trackCatalog.keys());
+    this.trackCatalog = new Map(tracks.map((t) => [t.id, t]));
+    this.trackCatalogOrder = [...tracks];
+
+    const removedIds: string[] = [];
+    for (const prevId of prevTrackIds) {
+      if (!this.trackCatalog.has(prevId)) {
+        removedIds.push(prevId);
+      }
+    }
+    if (removedIds.length > 0) {
+      this.queueController.removeTracksFromQueue(removedIds);
+    }
+
+    // Refresh current track metadata if it was updated (e.g. marked missing or metadata override edited)
     if (this.currentTrackId) {
-      const updated = this.queue.find((item) => item.id === this.currentTrackId) ?? null;
+      const updated = this.trackCatalog.get(this.currentTrackId) ?? null;
       if (updated && updated.status === 'missing' && this.status === 'playing') {
+        this.currentTrackSnapshot = updated;
         this.finalizeSession(true);
         this.cancelActiveFade(true);
+        this.switchingTrack = true;
         this.audio.pause();
-        this.status = 'error';
-        this.errorMessage = 'File âm thanh gốc không còn tồn tại trên ổ đĩa.';
+        this.switchingTrack = false;
+        this.activeAudioSrc = null;
+        this.queueController.markCurrentPlaybackFailed();
+        this.setErrorState(
+          buildPlaybackErrorDetails({
+            attemptId: this.currentAttemptId || `pb-queue-${this.nowMs().toString(36)}`,
+            stage: 'file-verify',
+            track: updated,
+            explicitCode: 'ERR_FILE_MISSING',
+            isMissingFile: true,
+          }),
+        );
       } else if (updated) {
+        this.currentTrackSnapshot = updated;
         this.recomputeTrackReplayGain(updated, false);
         this.emitDspState();
       }
@@ -389,27 +445,154 @@ export class AudioEngine implements AudioEngineController {
     this.emitState();
   }
 
+  setQueue(tracks: TrackRecord[]): void {
+    this.syncTrackCatalog(tracks);
+    this.queueController.initializeIdleContext({
+      contextId: 'engine-queue',
+      label: 'Hàng đợi phát',
+      kind: 'custom',
+      trackIds: tracks.map((t) => t.id),
+    });
+  }
+
+  getQueueState(): PlaybackQueueState {
+    return this.queueController.getState();
+  }
+
+  getPlaybackControls(): PlaybackControlState {
+    return this.queueController.getControls();
+  }
+
+  setShuffle(enabled: boolean): PlaybackControlState {
+    return this.queueController.setShuffle(enabled);
+  }
+
+  toggleShuffle(): PlaybackControlState {
+    return this.queueController.toggleShuffle();
+  }
+
+  setRepeatMode(mode: RepeatMode): PlaybackControlState {
+    return this.queueController.setRepeatMode(mode);
+  }
+
+  cycleRepeatMode(): PlaybackControlState {
+    return this.queueController.cycleRepeatMode();
+  }
+
+  setAutoNext(enabled: boolean): PlaybackControlState {
+    return this.queueController.setAutoNext(enabled);
+  }
+
+  toggleAutoNext(): PlaybackControlState {
+    return this.queueController.toggleAutoNext();
+  }
+
+  async playFromContext(
+    context: PlaybackContextDescriptor,
+    startTrackId?: string,
+    shuffle?: boolean,
+  ): Promise<void> {
+    const entry = this.queueController.startContext({
+      context,
+      startTrackId,
+      shuffle,
+    });
+    if (entry) {
+      await this.playQueueEntry(entry, { fromAutoAdvance: false });
+    }
+  }
+
   async play(trackId: string): Promise<void> {
-    const track = this.queue.find((item) => item.id === trackId) ?? null;
+    const fallbackContext: PlaybackContextDescriptor | undefined =
+      this.queueController.getState().context ??
+      (this.trackCatalogOrder.length > 0
+        ? {
+            contextId: 'library-default',
+            label: 'Thư viện nhạc',
+            kind: 'library',
+            trackIds: this.trackCatalogOrder.map((t) => t.id),
+          }
+        : undefined);
+
+    const entry = this.queueController.playTrackInCurrentOrNewContext(trackId, fallbackContext);
+    await this.playQueueEntry(entry, { fromAutoAdvance: false });
+  }
+
+  async playQueueEntry(
+    entry: PlaybackQueueEntry,
+    options: { fromAutoAdvance?: boolean } = {},
+  ): Promise<void> {
+    const fromAutoAdvance = Boolean(options.fromAutoAdvance);
+    const requestToken = ++this.playRequestSeq;
+    this.playbackGeneration += 1;
+    const generation = this.playbackGeneration;
+    const attemptId = `pb-${requestToken}-${this.nowMs().toString(36)}`;
+    this.currentAttemptFromAutoAdvance = fromAutoAdvance;
+    this.currentAttemptStartedPlaying = false;
+    this.currentQueueEntryId = entry.queueEntryId;
+
+    const track = this.trackCatalog.get(entry.trackId) ?? null;
     if (!track) {
+      if (this.onExternalEntryActivatedFn) {
+        this.switchingTrack = true;
+        this.audio.pause();
+        this.switchingTrack = false;
+        this.activeAudioSrc = null;
+        this.currentTrackId = null;
+        this.currentTrackSnapshot = null;
+        this.status = 'idle';
+        this.emitState();
+        await this.onExternalEntryActivatedFn(entry);
+        return;
+      }
+      this.currentTrackSnapshot = null;
       this.cancelActiveFade(true);
-      this.status = 'error';
-      this.errorMessage = 'Không tìm thấy bài hát trong danh sách thư viện.';
+      this.currentAttemptId = attemptId;
+      this.queueController.markCurrentPlaybackFailed();
+      this.setErrorState(
+        buildPlaybackErrorDetails({
+          attemptId,
+          stage: 'queue-lookup',
+          track: null,
+          explicitCode: 'ERR_FILE_MISSING',
+          explicitMessage: 'Không tìm thấy bài hát trong danh sách thư viện.',
+        }),
+      );
       this.emitState();
+      if (fromAutoAdvance) {
+        await this.tryAutoAdvanceAfterFailure(requestToken, generation);
+      }
       return;
     }
 
     if (track.status === 'missing') {
+      this.currentTrackSnapshot = track;
       this.finalizeSession(true);
       this.cancelActiveFade(true);
+      this.switchingTrack = true;
+      this.audio.pause();
+      this.switchingTrack = false;
+      this.activeAudioSrc = null;
       this.currentTrackId = track.id;
-      this.status = 'error';
-      this.errorMessage = `File gốc không còn tồn tại: ${track.original_path}`;
+      this.currentAttemptId = attemptId;
+      this.queueController.markCurrentPlaybackFailed();
+      this.setErrorState(
+        buildPlaybackErrorDetails({
+          attemptId,
+          stage: 'file-verify',
+          track,
+          explicitCode: 'ERR_FILE_MISSING',
+          explicitMessage: `File gốc không còn tồn tại: ${track.original_path}`,
+          isMissingFile: true,
+        }),
+      );
       this.emitState();
+      if (fromAutoAdvance) {
+        await this.tryAutoAdvanceAfterFailure(requestToken, generation);
+      }
       return;
     }
 
-    const requestToken = ++this.playRequestSeq;
     const wasActivelyPlayingOtherTrack =
       this.currentTrackId !== null &&
       this.currentTrackId !== track.id &&
@@ -439,9 +622,18 @@ export class AudioEngine implements AudioEngineController {
       }
     }
 
+    // Stop outgoing audio cleanly so stale events from previous track cannot hijack the new attempt
+    this.switchingTrack = true;
+    this.audio.pause();
+    this.switchingTrack = false;
+    this.activeAudioSrc = null;
+
     this.currentTrackId = track.id;
+    this.currentTrackSnapshot = track;
+    this.currentAttemptId = attemptId;
     this.status = 'loading';
     this.errorMessage = null;
+    this.playbackError = null;
     this.currentTimeSeconds = 0;
     this.durationSeconds = track.duration_ms ? track.duration_ms / 1000 : 0;
     this.recomputeTrackReplayGain(track, true);
@@ -457,11 +649,22 @@ export class AudioEngine implements AudioEngineController {
         }
         if (!check.exists) {
           this.setFadeMultiplier(1);
-          this.status = 'error';
-          this.errorMessage =
-            check.reason ?? `File gốc không còn tồn tại: ${track.original_path}`;
+          this.queueController.markCurrentPlaybackFailed();
+          this.setErrorState(
+            buildPlaybackErrorDetails({
+              attemptId,
+              stage: 'file-verify',
+              track,
+              explicitCode: 'ERR_FILE_MISSING',
+              explicitMessage: check.reason ?? `File gốc không còn tồn tại: ${track.original_path}`,
+              isMissingFile: true,
+            }),
+          );
           this.onTrackMissingFn?.(track.id);
           this.emitState();
+          if (fromAutoAdvance) {
+            await this.tryAutoAdvanceAfterFailure(requestToken, generation);
+          }
           return;
         }
       } catch (error) {
@@ -469,9 +672,20 @@ export class AudioEngine implements AudioEngineController {
           return;
         }
         this.setFadeMultiplier(1);
-        this.status = 'error';
-        this.errorMessage = `Lỗi kiểm tra file trước khi phát: ${error instanceof Error ? error.message : String(error)}`;
+        this.queueController.markCurrentPlaybackFailed();
+        this.setErrorState(
+          buildPlaybackErrorDetails({
+            attemptId,
+            stage: 'file-verify',
+            track,
+            thrownError: error,
+            explicitMessage: `Lỗi kiểm tra file trước khi phát: ${error instanceof Error ? error.message : String(error)}`,
+          }),
+        );
         this.emitState();
+        if (fromAutoAdvance) {
+          await this.tryAutoAdvanceAfterFailure(requestToken, generation);
+        }
         return;
       }
     }
@@ -481,8 +695,16 @@ export class AudioEngine implements AudioEngineController {
       mediaUrl = buildTrackMediaUrl(track.id);
     } catch (error) {
       this.setFadeMultiplier(1);
-      this.status = 'error';
-      this.errorMessage = error instanceof Error ? error.message : String(error);
+      this.setErrorState(
+        buildPlaybackErrorDetails({
+          attemptId,
+          stage: 'protocol-url',
+          track,
+          thrownError: error,
+          explicitCode: 'ERR_FILE_ACCESS_DENIED',
+          explicitMessage: error instanceof Error ? error.message : String(error),
+        }),
+      );
       this.emitState();
       return;
     }
@@ -499,11 +721,14 @@ export class AudioEngine implements AudioEngineController {
     const shouldFadeIn =
       this.transitionConfig.enabled && !this.muted && this.volume > 0.005;
     this.setFadeMultiplier(shouldFadeIn ? 0 : 1);
+    this.activeAudioSrc = mediaUrl;
     this.audio.src = mediaUrl;
     this.audio.load();
 
+    this.inAudioPlayCall = true;
     try {
       await this.audio.play();
+      this.inAudioPlayCall = false;
       if (requestToken !== this.playRequestSeq) {
         return;
       }
@@ -513,6 +738,10 @@ export class AudioEngine implements AudioEngineController {
       }
       if (this.status === 'loading') {
         this.status = 'playing';
+        this.errorMessage = null;
+        this.playbackError = null;
+        this.currentAttemptStartedPlaying = true;
+        this.queueController.markCurrentPlaybackStarted();
         this.startOrResumeSession(track);
         this.emitState();
       }
@@ -528,6 +757,7 @@ export class AudioEngine implements AudioEngineController {
         this.setFadeMultiplier(1);
       }
     } catch (error) {
+      this.inAudioPlayCall = false;
       this.cancelActiveFade(true);
       if (requestToken !== this.playRequestSeq) {
         return;
@@ -536,10 +766,36 @@ export class AudioEngine implements AudioEngineController {
       if (error instanceof Error && error.name === 'AbortError') {
         return;
       }
-      this.status = 'error';
-      this.errorMessage = this.audio.error
-        ? describeMediaError(this.audio.error, track)
-        : `Không thể bắt đầu phát nhạc: ${error instanceof Error ? error.message : String(error)}`;
+      this.queueController.markCurrentPlaybackFailed();
+      // Preserve richer MediaError classification if audio 'error' event already fired for this attempt
+      if (this.lastLoggedFailureAttemptId !== attemptId || !this.playbackError) {
+        this.setErrorState(
+          buildPlaybackErrorDetails({
+            attemptId,
+            stage: this.audio.error ? 'audio-decode' : 'play-start',
+            track,
+            mediaError: this.audio.error as MediaErrorContext | null,
+            thrownError: error,
+          }),
+        );
+        this.emitState();
+      }
+      if (fromAutoAdvance) {
+        await this.tryAutoAdvanceAfterFailure(requestToken, generation);
+      }
+    }
+  }
+
+  pauseSilently(): void {
+    this.playRequestSeq += 1;
+    this.cancelActiveFade(true);
+    this.pauseSessionSegment(true);
+    this.switchingTrack = true;
+    this.audio.pause();
+    this.switchingTrack = false;
+    this.activeAudioSrc = null;
+    if (this.status === 'playing' || this.status === 'loading') {
+      this.status = 'paused';
       this.emitState();
     }
   }
@@ -560,7 +816,12 @@ export class AudioEngine implements AudioEngineController {
 
   async resume(): Promise<void> {
     if (!this.currentTrackId) {
-      const firstPlayable = this.queue.find((t) => t.status === 'available');
+      const queueState = this.queueController.getState();
+      if (queueState.currentEntry && this.trackCatalog.has(queueState.currentEntry.trackId)) {
+        await this.playQueueEntry(queueState.currentEntry, { fromAutoAdvance: false });
+        return;
+      }
+      const firstPlayable = this.trackCatalogOrder.find((t) => t.status === 'available');
       if (firstPlayable) {
         await this.play(firstPlayable.id);
       }
@@ -574,6 +835,7 @@ export class AudioEngine implements AudioEngineController {
 
     if (this.status === 'ended') {
       this.finalizeSession(true);
+      this.playbackGeneration += 1;
       this.audio.currentTime = 0;
       this.currentTimeSeconds = 0;
     }
@@ -589,7 +851,9 @@ export class AudioEngine implements AudioEngineController {
     }
 
     try {
+      this.inAudioPlayCall = true;
       await this.audio.play();
+      this.inAudioPlayCall = false;
       if (requestToken !== this.playRequestSeq) {
         return;
       }
@@ -599,18 +863,30 @@ export class AudioEngine implements AudioEngineController {
       }
       this.status = 'playing';
       this.errorMessage = null;
+      this.playbackError = null;
+      this.currentAttemptStartedPlaying = true;
+      this.queueController.markCurrentPlaybackStarted();
       const current = this.getCurrentTrack();
       if (current) {
         this.startOrResumeSession(current);
       }
       this.emitState();
     } catch (error) {
+      this.inAudioPlayCall = false;
       this.setFadeMultiplier(1);
       if (requestToken !== this.playRequestSeq) {
         return;
       }
-      this.status = 'error';
-      this.errorMessage = `Không thể tiếp tục phát: ${error instanceof Error ? error.message : String(error)}`;
+      this.queueController.markCurrentPlaybackFailed();
+      this.setErrorState(
+        buildPlaybackErrorDetails({
+          attemptId: this.currentAttemptId,
+          stage: 'play-start',
+          track: this.getCurrentTrack(),
+          mediaError: this.audio.error as MediaErrorContext | null,
+          thrownError: error,
+        }),
+      );
       this.emitState();
     }
   }
@@ -648,6 +924,7 @@ export class AudioEngine implements AudioEngineController {
     this.currentTimeSeconds = target;
 
     if (this.status === 'ended' && target < effectiveDuration) {
+      this.playbackGeneration += 1;
       this.status = 'paused';
     }
 
@@ -655,9 +932,9 @@ export class AudioEngine implements AudioEngineController {
   }
 
   async next(): Promise<void> {
-    const target = this.findAdjacentPlayableTrack(1);
-    if (target) {
-      await this.play(target.id);
+    const advanced = this.queueController.advanceManualNext();
+    if (advanced.status === 'ok') {
+      await this.playQueueEntry(advanced.entry, { fromAutoAdvance: false });
     }
   }
 
@@ -668,9 +945,14 @@ export class AudioEngine implements AudioEngineController {
       return;
     }
 
-    const target = this.findAdjacentPlayableTrack(-1);
-    if (target) {
-      await this.play(target.id);
+    const prevEntry = this.queueController.advanceManualPrevious();
+    if (prevEntry) {
+      await this.playQueueEntry(prevEntry, { fromAutoAdvance: false });
+      return;
+    }
+
+    if (this.currentTrackId && this.currentTimeSeconds > 0) {
+      this.seek(0);
     }
   }
 
@@ -717,10 +999,21 @@ export class AudioEngine implements AudioEngineController {
     return this.cachedSnapshot;
   }
 
+  getCorePlaybackState(): PlaybackState {
+    return this.cachedCoreSnapshot;
+  }
+
   subscribe(listener: (state: PlaybackState) => void): () => void {
     this.listeners.add(listener);
     return () => {
       this.listeners.delete(listener);
+    };
+  }
+
+  subscribeCore(listener: (state: PlaybackState) => void): () => void {
+    this.coreListeners.add(listener);
+    return () => {
+      this.coreListeners.delete(listener);
     };
   }
 
@@ -979,8 +1272,29 @@ export class AudioEngine implements AudioEngineController {
     });
   }
 
+  private setErrorState(details: PlaybackErrorDetails): void {
+    this.status = 'error';
+    this.errorMessage = details.summary;
+    this.playbackError = details;
+    if (this.lastLoggedFailureAttemptId !== details.attemptId) {
+      this.lastLoggedFailureAttemptId = details.attemptId;
+      this.onDiagnosticFn?.({
+        level: 'error',
+        scope: 'audio-engine',
+        code: details.code,
+        stage: details.stage,
+        attemptId: details.attemptId,
+        message: `${details.summary}${details.trackTitle ? ` (${details.trackTitle})` : ''}`,
+        detail: details.technicalDetail,
+      });
+    }
+  }
+
   private bindAudioEvents(): void {
     this.audio.addEventListener('loadedmetadata', () => {
+      if (!this.activeAudioSrc) {
+        return;
+      }
       if (Number.isFinite(this.audio.duration) && this.audio.duration >= 0) {
         this.durationSeconds = this.audio.duration;
       }
@@ -988,8 +1302,15 @@ export class AudioEngine implements AudioEngineController {
     });
 
     this.audio.addEventListener('timeupdate', () => {
-      if (Number.isFinite(this.audio.currentTime)) {
-        this.currentTimeSeconds = this.audio.currentTime;
+      if (!this.activeAudioSrc) {
+        return;
+      }
+      const nextTime = this.audio.currentTime;
+      if (Number.isFinite(nextTime)) {
+        if (Math.abs(nextTime - this.currentTimeSeconds) < 0.0005 && this.status !== 'playing') {
+          return;
+        }
+        this.currentTimeSeconds = nextTime;
         if (this.status === 'playing' && this.activeSession) {
           this.emitSessionCheckpoint(false);
         }
@@ -998,8 +1319,14 @@ export class AudioEngine implements AudioEngineController {
     });
 
     this.audio.addEventListener('playing', () => {
+      if (!this.activeAudioSrc) {
+        return;
+      }
       this.status = 'playing';
       this.errorMessage = null;
+      this.playbackError = null;
+      this.currentAttemptStartedPlaying = true;
+      this.queueController.markCurrentPlaybackStarted();
       const track = this.getCurrentTrack();
       if (track) {
         this.startOrResumeSession(track);
@@ -1008,6 +1335,9 @@ export class AudioEngine implements AudioEngineController {
     });
 
     this.audio.addEventListener('pause', () => {
+      if (this.switchingTrack || !this.activeAudioSrc) {
+        return;
+      }
       this.pauseSessionSegment(true);
       if (this.status === 'playing' || this.status === 'loading') {
         this.status = 'paused';
@@ -1016,6 +1346,9 @@ export class AudioEngine implements AudioEngineController {
     });
 
     this.audio.addEventListener('waiting', () => {
+      if (!this.activeAudioSrc) {
+        return;
+      }
       // Buffering MUST NOT count as active listening time
       this.pauseSessionSegment(false);
       if (this.currentTrackId && this.status !== 'paused' && this.status !== 'error') {
@@ -1025,6 +1358,15 @@ export class AudioEngine implements AudioEngineController {
     });
 
     this.audio.addEventListener('ended', () => {
+      if (!this.activeAudioSrc || this.switchingTrack) {
+        return;
+      }
+      if (this.endedHandledGeneration === this.playbackGeneration) {
+        return;
+      }
+      this.endedHandledGeneration = this.playbackGeneration;
+      const endedGeneration = this.playbackGeneration;
+
       this.finalizeSession(true);
       this.cancelActiveFade(true);
       this.status = 'ended';
@@ -1032,75 +1374,187 @@ export class AudioEngine implements AudioEngineController {
         this.currentTimeSeconds = this.durationSeconds;
       }
       this.emitState();
+      void this.handleNaturalTrackEnded(endedGeneration);
     });
 
     this.audio.addEventListener('error', () => {
+      if (this.switchingTrack || !this.activeAudioSrc) {
+        return;
+      }
       this.finalizeSession(true);
       this.cancelActiveFade(true);
+      this.queueController.markCurrentPlaybackFailed();
       const track = this.getCurrentTrack();
-      this.status = 'error';
-      this.errorMessage = describeMediaError(this.audio.error, track);
+      this.setErrorState(
+        buildPlaybackErrorDetails({
+          attemptId: this.currentAttemptId,
+          stage: 'runtime-media',
+          track,
+          mediaError: this.audio.error as MediaErrorContext | null,
+        }),
+      );
       this.emitState();
+
+      if (
+        !this.inAudioPlayCall &&
+        this.currentAttemptFromAutoAdvance &&
+        !this.currentAttemptStartedPlaying
+      ) {
+        void this.tryAutoAdvanceAfterFailure(this.playRequestSeq, this.playbackGeneration);
+      }
     });
+  }
+
+  private async tryAutoAdvanceAfterFailure(
+    requestToken: number,
+    generation: number,
+  ): Promise<void> {
+    if (requestToken !== this.playRequestSeq || generation !== this.playbackGeneration) {
+      return;
+    }
+    const nextCandidate = this.queueController.advanceAfterAutoPlayFailure();
+    if (nextCandidate.status === 'ok') {
+      await this.playQueueEntry(nextCandidate.entry, { fromAutoAdvance: true });
+    }
+  }
+
+  private async handleNaturalTrackEnded(endedGeneration: number): Promise<void> {
+    if (endedGeneration !== this.playbackGeneration) {
+      return;
+    }
+    const resolution = this.queueController.resolveNaturalTrackEnd();
+    if (endedGeneration !== this.playbackGeneration) {
+      return;
+    }
+
+    if (resolution.action === 'replay') {
+      this.playbackGeneration += 1;
+      const requestToken = ++this.playRequestSeq;
+      const track = this.getCurrentTrack();
+      this.currentAttemptFromAutoAdvance = false;
+      this.currentAttemptStartedPlaying = false;
+      this.audio.currentTime = 0;
+      this.currentTimeSeconds = 0;
+      this.status = 'loading';
+      this.errorMessage = null;
+      this.playbackError = null;
+      this.emitState();
+
+      try {
+        this.inAudioPlayCall = true;
+        await this.audio.play();
+        this.inAudioPlayCall = false;
+        if (requestToken !== this.playRequestSeq) {
+          return;
+        }
+        if (this.dsp.isActive()) {
+          await this.dsp.resumeIfSuspended();
+          this.emitDspState();
+        }
+        this.status = 'playing';
+        this.currentAttemptStartedPlaying = true;
+        this.queueController.markCurrentPlaybackStarted();
+        if (track) {
+          this.startOrResumeSession(track);
+        }
+        this.emitState();
+      } catch (error) {
+        this.inAudioPlayCall = false;
+        if (requestToken !== this.playRequestSeq) {
+          return;
+        }
+        this.queueController.markCurrentPlaybackFailed();
+        this.setErrorState(
+          buildPlaybackErrorDetails({
+            attemptId: this.currentAttemptId,
+            stage: 'play-start',
+            track,
+            mediaError: this.audio.error as MediaErrorContext | null,
+            thrownError: error,
+          }),
+        );
+        this.emitState();
+      }
+      return;
+    }
+
+    if (resolution.action === 'play-entry') {
+      await this.playQueueEntry(resolution.entry, { fromAutoAdvance: true });
+    }
   }
 
   private getCurrentTrack(): TrackRecord | null {
     if (!this.currentTrackId) {
       return null;
     }
-    return this.queue.find((item) => item.id === this.currentTrackId) ?? null;
-  }
-
-  private findAdjacentPlayableTrack(direction: 1 | -1): TrackRecord | null {
-    if (this.queue.length === 0) {
-      return null;
-    }
-
-    const currentIndex = this.currentTrackId
-      ? this.queue.findIndex((item) => item.id === this.currentTrackId)
-      : -1;
-
-    if (currentIndex === -1) {
-      return this.queue.find((item) => item.status === 'available') ?? null;
-    }
-
-    for (
-      let idx = currentIndex + direction;
-      idx >= 0 && idx < this.queue.length;
-      idx += direction
-    ) {
-      if (this.queue[idx].status === 'available') {
-        return this.queue[idx];
-      }
-    }
-
-    return null;
+    return this.trackCatalog.get(this.currentTrackId) ?? this.currentTrackSnapshot ?? null;
   }
 
   private buildSnapshot(): PlaybackState {
     const currentTrack = this.getCurrentTrack();
-    const canPrevious =
-      this.currentTimeSeconds > 3 || this.findAdjacentPlayableTrack(-1) !== null;
-    const canNext = this.findAdjacentPlayableTrack(1) !== null;
+    const queueState = this.queueController.getState();
+    const controls = queueState.controls;
+    const canPrevious = this.queueController.canGoPrevious(this.currentTimeSeconds);
+    if (this.canNextDirty) {
+      this.cachedCanNext = this.queueController.canGoNext();
+      this.canNextDirty = false;
+    }
+    const canNext = this.cachedCanNext;
 
     return {
       status: this.status,
       currentTrackId: this.currentTrackId,
+      currentQueueEntryId: this.currentQueueEntryId,
       currentTrack,
       currentTimeSeconds: this.currentTimeSeconds,
       durationSeconds: this.durationSeconds,
       volume: this.volume,
       muted: this.muted,
       errorMessage: this.errorMessage,
+      playbackError: this.playbackError,
       canPrevious,
       canNext,
+      playbackGeneration: this.playbackGeneration,
+      shuffleEnabled: controls.shuffleEnabled,
+      repeatMode: controls.repeatMode,
+      autoNextEnabled: controls.autoNextEnabled,
+      remainingReplays: queueState.repeatRuntime.remainingReplays,
     };
   }
 
   private emitState(): void {
-    this.cachedSnapshot = this.buildSnapshot();
+    const next = this.buildSnapshot();
+    this.cachedSnapshot = next;
+    const prevCore = this.cachedCoreSnapshot;
+    const coreChanged =
+      !prevCore ||
+      prevCore.status !== next.status ||
+      prevCore.currentTrackId !== next.currentTrackId ||
+      prevCore.currentQueueEntryId !== next.currentQueueEntryId ||
+      prevCore.currentTrack !== next.currentTrack ||
+      prevCore.durationSeconds !== next.durationSeconds ||
+      prevCore.volume !== next.volume ||
+      prevCore.muted !== next.muted ||
+      prevCore.errorMessage !== next.errorMessage ||
+      prevCore.playbackError !== next.playbackError ||
+      prevCore.canPrevious !== next.canPrevious ||
+      prevCore.canNext !== next.canNext ||
+      prevCore.playbackGeneration !== next.playbackGeneration ||
+      prevCore.shuffleEnabled !== next.shuffleEnabled ||
+      prevCore.repeatMode !== next.repeatMode ||
+      prevCore.autoNextEnabled !== next.autoNextEnabled ||
+      prevCore.remainingReplays !== next.remainingReplays;
+    if (coreChanged) {
+      this.cachedCoreSnapshot = next;
+    }
+
     for (const listener of this.listeners) {
-      listener(this.cachedSnapshot);
+      listener(next);
+    }
+    if (coreChanged) {
+      for (const listener of this.coreListeners) {
+        listener(next);
+      }
     }
   }
 }

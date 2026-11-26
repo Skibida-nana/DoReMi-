@@ -4,20 +4,20 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const configDirname = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig(() => {
   return {
-    root: path.resolve(__dirname, 'src/renderer'),
+    root: path.resolve(configDirname, 'src/renderer'),
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
-        '@shared': path.resolve(__dirname, 'src/shared'),
-        '@renderer': path.resolve(__dirname, 'src/renderer/src'),
+        '@shared': path.resolve(configDirname, 'src/shared'),
+        '@renderer': path.resolve(configDirname, 'src/renderer/src'),
       },
     },
     build: {
-      outDir: path.resolve(__dirname, 'dist'),
+      outDir: path.resolve(configDirname, 'dist'),
       emptyOutDir: true,
     },
     server: {

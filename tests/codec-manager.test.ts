@@ -22,6 +22,14 @@ import {
   getFoobarPackCodecEntries,
   matchFilenameToCodecId,
 } from '../src/shared/utils/codec-registry';
+import {
+  createCrossPlatformTestInspector,
+  createCrossPlatformTestProcessAdapter,
+  createMockCodecManager,
+  createSimulatedPathSafetyOps,
+  probeOsLinkSupport,
+  writeCrossPlatformMockCli,
+} from './helpers/cross-platform-codec-harness';
 
 /**
  * Builds a minimal structurally valid Windows PE header fixture for testing PE parsing & architecture checks.
@@ -86,10 +94,10 @@ async function createTempWorkspace(): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), 'doremi-phase03a-'));
 }
 
-async function writeMockScript(filePath: string, body: string): Promise<void> {
+async function writePosixShebangFixture(filePath: string, body: string): Promise<void> {
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   await fs.writeFile(filePath, `#!/bin/sh\n${body}\n`, { mode: 0o755 });
-  await fs.chmod(filePath, 0o755);
+  await fs.chmod(filePath, 0o755).catch(() => {});
 }
 
 test('Executable Security: rejects invalid files, bare 2-byte MZ, bad PE signature, and DLL masquerading as EXE', async (t) => {
@@ -141,7 +149,7 @@ test('Executable Security: rejects invalid files, bare 2-byte MZ, bad PE signatu
 
   // 6. POSIX script rejected by default
   const shFile = path.join(root, 'flac');
-  await writeMockScript(shFile, 'echo "flac 1.4.3"');
+  await writePosixShebangFixture(shFile, 'echo "flac 1.4.3"');
   const shStrict = await validateExecutableFileHeader(shFile, 'linux', { hostArch: 'x64' });
   assert.equal(shStrict.valid, false);
 });
@@ -210,17 +218,22 @@ test('Binary Trust Policy & Checksum Mismatch: untrusted or tampered custom bina
   const userDataDir = path.join(root, 'userdata');
   const sentinelFile = path.join(root, 'should-never-exist.txt');
   const customFlacDir = path.join(userDataDir, 'codecs', 'custom', 'flac');
-  const customFlacPath = path.join(customFlacDir, 'flac');
+  const customFlacPath = await writeCrossPlatformMockCli(
+    customFlacDir,
+    'flac',
+    `
+    const fs = require('node:fs');
+    fs.writeFileSync(${JSON.stringify(sentinelFile)}, 'executed');
+    console.log('flac 1.4.3');
+    process.exit(0);
+    `,
+  );
 
-  // Drop an unverified script directly into custom/flac/ that would create sentinelFile if executed
-  await writeMockScript(customFlacPath, `touch "${sentinelFile}"\necho "flac 1.4.3"`);
-
-  const manager = new CodecManager({
+  const manager = createMockCodecManager({
     userDataDir,
     bundledResourcesDir: path.join(root, 'empty-bundled'),
-    platform: 'linux',
-    arch: 'x64',
-    allowPosixTestScripts: true,
+    platform: process.platform,
+    arch: process.arch,
   });
 
   // 1. Without user consent or official checksum -> unverified & NEVER executed
@@ -246,7 +259,15 @@ test('Binary Trust Policy & Checksum Mismatch: untrusted or tampered custom bina
 
   // 3. Tamper with the binary on disk -> cache invalidates & SHA-256 mismatch revokes consent!
   const sentinel2 = path.join(root, 'tampered-sentinel.txt');
-  await writeMockScript(customFlacPath, `touch "${sentinel2}"\necho "flac 9.9.9 tampered"`);
+  await writeCrossPlatformMockCli(
+    customFlacPath,
+    `
+    const fs = require('node:fs');
+    fs.writeFileSync(${JSON.stringify(sentinel2)}, 'tampered');
+    console.log('flac 9.9.9 tampered');
+    process.exit(0);
+    `,
+  );
   const afterTamper = await manager.resolveCodec('flac');
   assert.equal(afterTamper.status, 'unverified');
   assert.equal(afterTamper.trustStatus, 'unverified');
@@ -256,16 +277,24 @@ test('Binary Trust Policy & Checksum Mismatch: untrusted or tampered custom bina
   // 4. Official checksum mismatch -> invalid & NEVER executed
   const sentinel3 = path.join(root, 'checksum-sentinel.txt');
   const bundledDir = path.join(root, 'bundled-checksum');
-  await writeMockScript(path.join(bundledDir, 'lame'), `touch "${sentinel3}"\necho "LAME 3.100"`);
+  await writeCrossPlatformMockCli(
+    bundledDir,
+    'lame',
+    `
+    const fs = require('node:fs');
+    fs.writeFileSync(${JSON.stringify(sentinel3)}, 'executed');
+    console.log('LAME 3.100');
+    process.exit(0);
+    `,
+  );
 
-  const checksumManager = new CodecManager({
+  const checksumManager = createMockCodecManager({
     userDataDir: path.join(root, 'userdata-checksum'),
     bundledResourcesDir: bundledDir,
-    platform: 'linux',
-    arch: 'x64',
-    allowPosixTestScripts: true,
+    platform: process.platform,
+    arch: process.arch,
     trustedChecksums: {
-      lame: { lame: '0'.repeat(64) }, // intentionally wrong expected SHA-256
+      lame: { 'lame.cjs': '0'.repeat(64) }, // intentionally wrong expected SHA-256
     },
   });
 
@@ -333,8 +362,11 @@ test('System PATH Disabled by Default & Opt-in System PATH still enforces Trust 
   t.after(() => fs.rm(root, { recursive: true, force: true }));
 
   const fakeBinDir = path.join(root, 'fake-path-bin');
-  const sysFlac = path.join(fakeBinDir, 'flac');
-  await writeMockScript(sysFlac, 'echo "flac 1.4.3 system"');
+  const sysFlac = await writeCrossPlatformMockCli(
+    fakeBinDir,
+    'flac',
+    `console.log('flac 1.4.3 system'); process.exit(0);`,
+  );
 
   const originalPath = process.env.PATH;
   process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath ?? ''}`;
@@ -342,12 +374,11 @@ test('System PATH Disabled by Default & Opt-in System PATH still enforces Trust 
     process.env.PATH = originalPath;
   });
 
-  const manager = new CodecManager({
+  const manager = createMockCodecManager({
     userDataDir: path.join(root, 'userdata'),
     bundledResourcesDir: path.join(root, 'empty-bundled'),
-    platform: 'linux',
-    arch: 'x64',
-    allowPosixTestScripts: true,
+    platform: process.platform,
+    arch: process.arch,
   });
 
   // Default: allowSystemPathLookup MUST be false
@@ -381,18 +412,17 @@ test('Health Verification: rejects non-zero exit code with text & rejects unrela
 
   const bundledDir = path.join(root, 'bundled');
   // 1. flac exits 1 even though it prints text -> MUST fail (flac accepts only [0])
-  await writeMockScript(path.join(bundledDir, 'flac'), 'echo "flac 1.4.3 fake fail"; exit 1');
+  await writeCrossPlatformMockCli(bundledDir, 'flac', `console.log('flac 1.4.3 fake fail'); process.exit(1);`);
   // 2. lame exits 0 but prints unrelated identity banner -> MUST fail identity check
-  await writeMockScript(path.join(bundledDir, 'lame'), 'echo "totally random tool v1.0"; exit 0');
+  await writeCrossPlatformMockCli(bundledDir, 'lame', `console.log('totally random tool v1.0'); process.exit(0);`);
   // 3. mpcdec exits 1 with matching musepack/mpcdec identity -> allowed by adapter rule [0, 1]
-  await writeMockScript(path.join(bundledDir, 'mpcdec'), 'echo "mpcdec - Musepack SV8 decoder"; exit 1');
+  await writeCrossPlatformMockCli(bundledDir, 'mpcdec', `console.log('mpcdec - Musepack SV8 decoder'); process.exit(1);`);
 
-  const manager = new CodecManager({
+  const manager = createMockCodecManager({
     userDataDir: path.join(root, 'userdata'),
     bundledResourcesDir: bundledDir,
-    platform: 'linux',
-    arch: 'x64',
-    allowPosixTestScripts: true,
+    platform: process.platform,
+    arch: process.arch,
   });
 
   const flac = await manager.resolveCodec('flac');
@@ -423,15 +453,13 @@ test('Streaming SHA-256 & Verification Cache Invalidation work accurately across
 
   // Cache invalidation when bundled binary changes on disk
   const bundledDir = path.join(root, 'bundled');
-  const flacBin = path.join(bundledDir, 'flac');
-  await writeMockScript(flacBin, 'echo "flac 1.4.2"');
+  const flacBin = await writeCrossPlatformMockCli(bundledDir, 'flac', `console.log('flac 1.4.2'); process.exit(0);`);
 
-  const manager = new CodecManager({
+  const manager = createMockCodecManager({
     userDataDir: path.join(root, 'userdata'),
     bundledResourcesDir: bundledDir,
-    platform: 'linux',
-    arch: 'x64',
-    allowPosixTestScripts: true,
+    platform: process.platform,
+    arch: process.arch,
   });
 
   const first = await manager.resolveCodec('flac');
@@ -439,7 +467,7 @@ test('Streaming SHA-256 & Verification Cache Invalidation work accurately across
   assert.equal(first.version, 'flac 1.4.2');
 
   // Modify binary content & size -> cache must auto-invalidate without forceRescan
-  await writeMockScript(flacBin, 'echo "flac 1.4.3 updated-banner"');
+  await writeCrossPlatformMockCli(flacBin, `console.log('flac 1.4.3 updated-banner'); process.exit(0);`);
   const second = await manager.resolveCodec('flac');
   assert.equal(second.status, 'ready');
   assert.equal(second.version, 'flac 1.4.3 updated-banner');
@@ -455,35 +483,37 @@ test('Discovery Optimization: default concurrency = 1, single-codec resolution a
   const overlapFlag = path.join(root, 'overlap-detected.flag');
   const lameLog = path.join(root, 'lame-probed.log');
 
-  // Each mock encoder creates a lock file, sleeps briefly, checks for overlap, then cleans up
+  // Cross-platform JS concurrency lock monitor: detects any overlapping child probe
   const concurrencyProbeBody = (banner: string, extraLog?: string) => `
-if [ -f "${lockFile}" ]; then
-  echo "OVERLAP" >> "${overlapFlag}"
-fi
-touch "${lockFile}"
-${extraLog ? `echo "probed" >> "${extraLog}"` : ''}
-sleep 0.04
-rm -f "${lockFile}"
-echo "${banner}"
-`;
+    const fs = require('node:fs');
+    if (fs.existsSync(${JSON.stringify(lockFile)})) {
+      fs.appendFileSync(${JSON.stringify(overlapFlag)}, 'OVERLAP\\n');
+    }
+    fs.writeFileSync(${JSON.stringify(lockFile)}, ${JSON.stringify(banner)});
+    ${extraLog ? `fs.appendFileSync(${JSON.stringify(extraLog)}, 'probed\\n');` : ''}
+    setTimeout(() => {
+      try { fs.rmSync(${JSON.stringify(lockFile)}, { force: true }); } catch {}
+      console.log(${JSON.stringify(banner)});
+      process.exit(0);
+    }, 45);
+  `;
 
-  await writeMockScript(path.join(bundledDir, 'flac'), concurrencyProbeBody('flac 1.4.3'));
-  await writeMockScript(path.join(bundledDir, 'lame'), concurrencyProbeBody('LAME 3.100', lameLog));
-  await writeMockScript(path.join(bundledDir, 'opusenc'), concurrencyProbeBody('opusenc 0.2'));
+  const expectedFlacPath = await writeCrossPlatformMockCli(bundledDir, 'flac', concurrencyProbeBody('flac 1.4.3'));
+  await writeCrossPlatformMockCli(bundledDir, 'lame', concurrencyProbeBody('LAME 3.100', lameLog));
+  await writeCrossPlatformMockCli(bundledDir, 'opusenc', concurrencyProbeBody('opusenc 0.2'));
 
-  const manager = new CodecManager({
+  const manager = createMockCodecManager({
     userDataDir: path.join(root, 'userdata'),
     bundledResourcesDir: bundledDir,
-    platform: 'linux',
-    arch: 'x64',
-    allowPosixTestScripts: true,
+    platform: process.platform,
+    arch: process.arch,
   });
 
   assert.equal(manager.getDiscoveryPolicy().maxProbeConcurrency, 1);
 
   // 1. Single-codec resolution must NOT probe lame!
   const flacPath = await manager.resolveExecutablePath('flac');
-  assert.equal(flacPath, path.join(bundledDir, 'flac'));
+  assert.equal(flacPath, expectedFlacPath);
   await assert.rejects(() => fs.access(lameLog));
 
   // 2. Concurrent getInventory calls deduplicate and obey concurrency = 1 (zero overlap!)
@@ -502,19 +532,18 @@ test('Codec Fallback: falls back from broken Custom Codec to working Bundled Cod
 
   const userDataDir = path.join(root, 'userdata');
   const bundledDir = path.join(root, 'bundled');
-  await writeMockScript(path.join(bundledDir, 'flac'), 'echo "flac 1.4.3 bundled"');
+  await writeCrossPlatformMockCli(bundledDir, 'flac', `console.log('flac 1.4.3 bundled'); process.exit(0);`);
 
   // Place a corrupted custom flac binary
   const customDir = path.join(userDataDir, 'codecs', 'custom', 'flac');
   await fs.mkdir(customDir, { recursive: true });
-  await fs.writeFile(path.join(customDir, 'flac'), 'corrupted-not-an-executable');
+  await fs.writeFile(path.join(customDir, 'flac.cjs'), 'corrupted-not-an-executable');
 
-  const manager = new CodecManager({
+  const manager = createMockCodecManager({
     userDataDir,
     bundledResourcesDir: bundledDir,
-    platform: 'linux',
-    arch: 'x64',
-    allowPosixTestScripts: true,
+    platform: process.platform,
+    arch: process.arch,
   });
 
   const resolved = await manager.resolveCodec('flac');
@@ -524,7 +553,7 @@ test('Codec Fallback: falls back from broken Custom Codec to working Bundled Cod
   assert.ok((resolved.fallbackWarnings?.length ?? 0) >= 1);
 
   // User's custom file was NOT deleted automatically
-  await fs.access(path.join(customDir, 'flac'));
+  await fs.access(path.join(customDir, 'flac.cjs'));
 
   // Compatible provider fallback across codec IDs
   const provider = await manager.resolveCompatibleProvider(['refalac', 'qaac', 'flac']);
@@ -536,20 +565,15 @@ test('Safe Custom Import, Active-Use Lock & Failed Import Recovery preserve exis
   t.after(() => fs.rm(root, { recursive: true, force: true }));
 
   const userDataDir = path.join(root, 'userdata');
-  const goodSource = path.join(root, 'good-flac');
-  const badSource = path.join(root, 'bad-flac');
-  const updatedGoodSource = path.join(root, 'updated-flac');
+  const goodSource = await writeCrossPlatformMockCli(root, 'good-flac', `console.log('flac 1.4.2 custom'); process.exit(0);`);
+  const badSource = await writeCrossPlatformMockCli(root, 'bad-flac', `console.log('broken binary'); process.exit(2);`);
+  const updatedGoodSource = await writeCrossPlatformMockCli(root, 'updated-flac', `console.log('flac 1.4.3 custom-v2'); process.exit(0);`);
 
-  await writeMockScript(goodSource, 'echo "flac 1.4.2 custom"');
-  await writeMockScript(badSource, 'echo "broken binary"; exit 2');
-  await writeMockScript(updatedGoodSource, 'echo "flac 1.4.3 custom-v2"');
-
-  const manager = new CodecManager({
+  const manager = createMockCodecManager({
     userDataDir,
     bundledResourcesDir: path.join(root, 'empty-bundled'),
-    platform: 'linux',
-    arch: 'x64',
-    allowPosixTestScripts: true,
+    platform: process.platform,
+    arch: process.arch,
   });
 
   // 1. Import valid custom binary with user consent
@@ -588,38 +612,53 @@ test('Safe Custom Import, Active-Use Lock & Failed Import Recovery preserve exis
   assert.equal(secondImport.entry?.version, 'flac 1.4.3 custom-v2');
 });
 
-test('Safe Pack Import, Symlink Rejection & Synchronized Rollback restore binaries, DLLs, licenses, and codec-state.json', async (t) => {
+test('Safe Pack Import, Escape Rejection & Synchronized Rollback restore binaries, DLLs, licenses, and codec-state.json', async (t) => {
   const root = await createTempWorkspace();
   t.after(() => fs.rm(root, { recursive: true, force: true }));
 
   const userDataDir = path.join(root, 'userdata');
   const packV1 = path.join(root, 'pack-v1');
   const packV2 = path.join(root, 'pack-v2');
-  const outsideFile = path.join(root, 'outside-secret-lame');
   await fs.mkdir(packV1, { recursive: true });
   await fs.mkdir(packV2, { recursive: true });
-  await writeMockScript(outsideFile, 'echo "LAME 3.100 outside"');
+  const outsideFile = await writeCrossPlatformMockCli(
+    root,
+    'outside-secret-lame',
+    `console.log('LAME 3.100 outside'); process.exit(0);`,
+  );
 
-  // Pack v1: flac 1.4.2 + nsutil.dll (valid PE DLL) + flac_license.txt + escaping symlink (must be rejected)
-  await writeMockScript(path.join(packV1, 'flac'), 'echo "flac 1.4.2 pack-v1"');
+  // Pack v1: flac 1.4.2 + nsutil.dll (valid PE DLL) + flac_license.txt + escaping link entry (lame.cjs -> outsideFile)
+  await writeCrossPlatformMockCli(packV1, 'flac', `console.log('flac 1.4.2 pack-v1'); process.exit(0);`);
   await fs.writeFile(path.join(packV1, 'nsutil.dll'), buildPeFixture({ machine: 0x014c, isDll: true }));
   await fs.writeFile(path.join(packV1, 'flac_license.txt'), 'BSD-3-Clause FLAC License v1');
-  await fs.symlink(outsideFile, path.join(packV1, 'lame'));
+  const escapedEntryPath = await writeCrossPlatformMockCli(
+    packV1,
+    'lame',
+    `console.log('should be skipped because realpath escapes packV1'); process.exit(0);`,
+  );
 
   // Pack v2: flac 1.4.3 + lame_license.txt (no nsutil.dll)
-  await writeMockScript(path.join(packV2, 'flac'), 'echo "flac 1.4.3 pack-v2"');
+  await writeCrossPlatformMockCli(packV2, 'flac', `console.log('flac 1.4.3 pack-v2'); process.exit(0);`);
   await fs.writeFile(path.join(packV2, 'lame_license.txt'), 'LGPL-2.0 LAME License v2');
+
+  const simOps = createSimulatedPathSafetyOps({
+    realpathOverrides: { [escapedEntryPath]: outsideFile },
+    symlinkPaths: new Set([escapedEntryPath]),
+  });
 
   const manager = new CodecManager({
     userDataDir,
     bundledResourcesDir: path.join(root, 'empty-bundled'),
-    platform: 'linux',
-    arch: 'x64',
-    allowPosixTestScripts: true,
+    platform: process.platform,
+    arch: process.arch,
+    processAdapter: createCrossPlatformTestProcessAdapter(),
+    executableInspector: createCrossPlatformTestInspector(),
+    mockCandidateExtensions: ['.cjs'],
+    fsPathOps: simOps,
   });
 
-  // Check realpath helper directly against escaping symlink
-  const symCheck = await isRealPathStrictlyWithinDirectory(path.join(packV1, 'lame'), packV1);
+  // Check realpath helper directly against escaping link
+  const symCheck = await isRealPathStrictlyWithinDirectory(escapedEntryPath, packV1, simOps);
   assert.equal(symCheck.safe, false);
 
   // Import Pack v1
@@ -668,6 +707,42 @@ test('Safe Pack Import, Symlink Rejection & Synchronized Rollback restore binari
   assert.equal(persistedState.installedPackDate, '2026-03-13');
   assert.deepEqual(persistedState.installedSupportingDlls, ['nsutil.dll']);
   assert.deepEqual(persistedState.installedLicenseFiles, ['flac_license.txt']);
+});
+
+test('Phase 4.5C OS Pack Reparse Integration: real symlink/junction escape rejection inside pack folder when OS permits', async (t) => {
+  const caps = await probeOsLinkSupport();
+  if (!caps.fileSymlink && !caps.junction) {
+    t.skip(
+      `OS symlink/junction blocked (fileSymlink=${caps.fileSymlinkErrorCode}, junction=${caps.junctionErrorCode}). Run outside sandbox / with Developer Mode to test kernel pack escape.`,
+    );
+    return;
+  }
+
+  const root = await createTempWorkspace();
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const packDir = path.join(root, 'pack');
+  const outsideDir = path.join(root, 'outside');
+  await fs.mkdir(packDir, { recursive: true });
+  await fs.mkdir(outsideDir, { recursive: true });
+  await writeCrossPlatformMockCli(packDir, 'flac', `console.log('flac 1.4.2'); process.exit(0);`);
+  const outsideLame = await writeCrossPlatformMockCli(outsideDir, 'lame', `console.log('LAME 3.100'); process.exit(0);`);
+
+  if (caps.fileSymlink) {
+    await fs.symlink(outsideLame, path.join(packDir, 'lame.cjs'), 'file');
+  } else if (caps.junction) {
+    await fs.symlink(outsideDir, path.join(packDir, 'escaped-subdir'), 'junction');
+  }
+
+  const manager = createMockCodecManager({
+    userDataDir: path.join(root, 'userdata'),
+    bundledResourcesDir: path.join(root, 'empty-bundled'),
+    platform: process.platform,
+    arch: process.arch,
+  });
+
+  const res = await manager.importEncoderPackFromFolder(packDir);
+  assert.deepEqual(res.importedCodecs, ['flac']);
+  assert.ok(res.errors.some((e) => e.includes('vượt phạm vi')));
 });
 
 test('Remote Manifest Security: blocks unsafe URLs, private IPv4/IPv6 DNS, redirects, oversized payloads, and invalid JSON schemas', async (t) => {

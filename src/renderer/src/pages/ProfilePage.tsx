@@ -227,7 +227,7 @@ export function ProfilePage() {
   return (
     <div
       data-testid="profile-personalization-page"
-      className="mx-auto max-w-[1040px] space-y-6 pb-32 pt-2"
+      className="mx-auto max-w-[1040px] space-y-6 pb-36 pt-2"
     >
       {/* Hidden browser-preview file inputs */}
       <input
@@ -1090,7 +1090,7 @@ export function ProfilePage() {
             checked={preferences.dynamicAlbumColors}
             onChange={(val) => uiStore.updatePreferences({ dynamicAlbumColors: val })}
             label="Màu sắc động theo ảnh bìa"
-            description="Tự động trích xuất tông màu chủ đạo cho màn hình Now Playing và ánh sáng nền."
+            description="Tự động trích xuất bảng màu thích ứng từ ảnh bìa cho Now Playing, Focus Vinyl và ánh sáng nền."
             accentHex={userAccent.activeHex}
             testId="pref-dynamic-colors"
           />

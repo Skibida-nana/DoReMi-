@@ -1,6 +1,1 @@
-{
-  "name": "Lossless Player",
-  "description": "Offline Windows desktop lossless audio player built with Electron, React, TypeScript, and SQLite.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
+{"name":"Lossless Player","description":"Offline Windows desktop lossless audio player built with Electron, React, TypeScript, and SQLite.","requestFramePermissions":[],"majorCapabilities":["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]}

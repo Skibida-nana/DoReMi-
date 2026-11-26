@@ -269,6 +269,33 @@ export class VinylSwapController {
     });
   }
 
+  /**
+   * Immediately cancels any in-flight timed swap steps (e.g. when window hides/minimizes
+   * or restores from background) and settles directly onto `targetTrackId` without
+   * leaving the platter mid-lift or replaying a stale 1.08s timer backlog.
+   */
+  settleImmediately(overrideTargetTrackId?: string): void {
+    const resolvedTarget = overrideTargetTrackId || this.state.targetTrackId || this.state.displayedTrackId;
+    if (
+      this.state.displayedTrackId === resolvedTarget &&
+      this.state.targetTrackId === resolvedTarget &&
+      this.state.phase === 'idle' &&
+      !this.state.isSwapping &&
+      this.timers.length === 0
+    ) {
+      return;
+    }
+    this.sequenceId += 1;
+    this.clearTimers();
+    this.state = {
+      displayedTrackId: resolvedTarget,
+      targetTrackId: resolvedTarget,
+      phase: 'idle',
+      isSwapping: false,
+    };
+    this.emit();
+  }
+
   dispose(): void {
     this.sequenceId += 1;
     this.clearTimers();

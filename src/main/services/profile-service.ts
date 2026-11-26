@@ -30,6 +30,11 @@ import {
   DEFAULT_REPLAYGAIN_SETTINGS,
   normalizeReplayGainSettings,
 } from '../../shared/utils/replaygain';
+import {
+  DEFAULT_PLAYBACK_CONTROLS,
+  normalizePlaybackControls,
+} from '../../shared/utils/playback-controls';
+import { buildMediaCorsHeaders, isAllowedMediaCorsOrigin } from './audio-stream-handler';
 
 export const MAX_PROFILE_MEDIA_BYTES = 10 * 1024 * 1024; // 10 MB default limit
 export const MAX_DISPLAY_NAME_LENGTH = 48;
@@ -220,6 +225,7 @@ export const DEFAULT_PERSONALIZATION_PREFERENCES: PersonalizationPreferences = {
   },
   replayGain: { ...DEFAULT_REPLAYGAIN_SETTINGS },
   audioLab: createDefaultAudioLabSettings(),
+  playbackControls: { ...DEFAULT_PLAYBACK_CONTROLS },
   editorialTypography: { ...DEFAULT_EDITORIAL_TYPOGRAPHY },
   editorialFonts: [],
 };
@@ -263,11 +269,27 @@ export class ProfileService {
   private readonly db: Database.Database;
   private readonly mediaDir: string;
   private readonly fontsDir: string;
+  private readonly stmtGetProfile: Database.Statement;
+  private readonly stmtGetPref: Database.Statement;
+  private readonly stmtWritePref: Database.Statement;
+  private cachedProfile: LocalUserProfile | null = null;
+  private cachedPreferences: PersonalizationPreferences | null = null;
 
   constructor(options: { db: Database.Database; userDataDir: string }) {
     this.db = options.db;
     this.mediaDir = path.join(options.userDataDir, 'profile-media');
     this.fontsDir = path.join(this.mediaDir, 'fonts');
+    this.stmtGetProfile = this.db.prepare(
+      'SELECT display_name, avatar_file, avatar_mime, avatar_is_animated, avatar_hash, updated_at FROM user_profile WHERE id = 1',
+    );
+    this.stmtGetPref = this.db.prepare(
+      'SELECT value_json FROM app_preferences WHERE key = ?',
+    );
+    this.stmtWritePref = this.db.prepare(
+      `INSERT INTO app_preferences (key, value_json, updated_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at`,
+    );
   }
 
   private ensureMediaDir(): void {
@@ -279,11 +301,11 @@ export class ProfileService {
   }
 
   getProfile(): LocalUserProfile {
-    const row = this.db
-      .prepare(
-        'SELECT display_name, avatar_file, avatar_mime, avatar_is_animated, avatar_hash, updated_at FROM user_profile WHERE id = 1',
-      )
-      .get() as ProfileRow | undefined;
+    if (this.cachedProfile) {
+      return { ...this.cachedProfile };
+    }
+
+    const row = this.stmtGetProfile.get() as ProfileRow | undefined;
 
     if (!row) {
       const now = new Date().toISOString();
@@ -292,7 +314,7 @@ export class ProfileService {
           'INSERT OR IGNORE INTO user_profile (id, display_name, avatar_is_animated, updated_at) VALUES (1, ?, 0, ?)',
         )
         .run(DEFAULT_DISPLAY_NAME, now);
-      return {
+      this.cachedProfile = {
         displayName: DEFAULT_DISPLAY_NAME,
         avatarUrl: null,
         avatarMime: null,
@@ -300,13 +322,14 @@ export class ProfileService {
         avatarHash: null,
         updatedAt: now,
       };
+      return { ...this.cachedProfile };
     }
 
     const avatarExists =
       Boolean(row.avatar_file) &&
       fs.existsSync(path.join(this.mediaDir, path.basename(row.avatar_file!)));
 
-    return {
+    this.cachedProfile = {
       displayName: row.display_name || DEFAULT_DISPLAY_NAME,
       avatarUrl: avatarExists ? buildProfileMediaUrl('avatar', row.avatar_hash) : null,
       avatarMime: avatarExists ? row.avatar_mime : null,
@@ -314,11 +337,13 @@ export class ProfileService {
       avatarHash: avatarExists ? row.avatar_hash : null,
       updatedAt: row.updated_at,
     };
+    return { ...this.cachedProfile };
   }
 
   updateDisplayName(rawName: string): LocalUserProfile {
     const sanitized = sanitizeDisplayName(rawName);
     const now = new Date().toISOString();
+    this.cachedProfile = null;
     const existing = this.db
       .prepare('SELECT id FROM user_profile WHERE id = 1')
       .get() as { id: number } | undefined;
@@ -395,6 +420,7 @@ export class ProfileService {
       await fsPromises.unlink(path.join(this.mediaDir, path.basename(prevRow.avatar_file))).catch(() => {});
     }
 
+    this.cachedProfile = null;
     return this.getProfile();
   }
 
@@ -417,13 +443,12 @@ export class ProfileService {
       }
     }
 
+    this.cachedProfile = null;
     return this.getProfile();
   }
 
   private readPreferenceJson<T>(key: string): T | null {
-    const row = this.db
-      .prepare('SELECT value_json FROM app_preferences WHERE key = ?')
-      .get(key) as { value_json: string } | undefined;
+    const row = this.stmtGetPref.get(key) as { value_json: string } | undefined;
     if (!row) {
       return null;
     }
@@ -436,13 +461,8 @@ export class ProfileService {
 
   private writePreferenceJson(key: string, value: unknown): void {
     const now = new Date().toISOString();
-    this.db
-      .prepare(
-        `INSERT INTO app_preferences (key, value_json, updated_at)
-         VALUES (?, ?, ?)
-         ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at`,
-      )
-      .run(key, JSON.stringify(value), now);
+    this.cachedPreferences = null;
+    this.stmtWritePref.run(key, JSON.stringify(value), now);
   }
 
   private readStoredEditorialFonts(): StoredEditorialFontMeta[] {
@@ -473,6 +493,10 @@ export class ProfileService {
   }
 
   getPreferences(): PersonalizationPreferences {
+    if (this.cachedPreferences) {
+      return this.cachedPreferences;
+    }
+
     const stored =
       this.readPreferenceJson<Partial<PersonalizationPreferences>>('personalization') ?? {};
     const bgMeta = this.readPreferenceJson<StoredBackgroundMeta>('custom_background_meta');
@@ -488,7 +512,7 @@ export class ProfileService {
     const durationSec: FadeDurationSec =
       rawDuration && VALID_FADE_DURATIONS.has(rawDuration) ? rawDuration : 1;
 
-    return {
+    this.cachedPreferences = {
       themeMode: stored.themeMode === 'light' ? 'light' : 'dark',
       accentPresetId:
         typeof stored.accentPresetId === 'string' && stored.accentPresetId.length > 0
@@ -536,12 +560,14 @@ export class ProfileService {
       },
       replayGain: normalizeReplayGainSettings(stored.replayGain),
       audioLab: normalizeAudioLabSettings(stored.audioLab),
+      playbackControls: normalizePlaybackControls(stored.playbackControls),
       editorialTypography: normalizeEditorialTypographySettings(
         stored.editorialTypography,
         validFontIds,
       ),
       editorialFonts,
     };
+    return this.cachedPreferences;
   }
 
   updatePreferences(
@@ -562,6 +588,14 @@ export class ProfileService {
       }),
       audioLab: normalizeAudioLabSettings(
         partial.audioLab !== undefined ? partial.audioLab : current.audioLab,
+      ),
+      playbackControls: normalizePlaybackControls(
+        partial.playbackControls
+          ? {
+              ...(current.playbackControls ?? DEFAULT_PLAYBACK_CONTROLS),
+              ...partial.playbackControls,
+            }
+          : current.playbackControls,
       ),
       editorialTypography: normalizeEditorialTypographySettings(
         {
@@ -719,6 +753,7 @@ export class ProfileService {
 
   async removeCustomBackground(): Promise<PersonalizationPreferences> {
     const prevMeta = this.readPreferenceJson<StoredBackgroundMeta>('custom_background_meta');
+    this.cachedPreferences = null;
     this.db.prepare('DELETE FROM app_preferences WHERE key = ?').run('custom_background_meta');
     if (prevMeta?.file) {
       await fsPromises.unlink(path.join(this.mediaDir, path.basename(prevMeta.file))).catch(() => {});
@@ -736,13 +771,22 @@ export class ProfileService {
    * without exposing OS paths to the renderer.
    */
   async resolveProfileMediaHttpResponse(request: Request): Promise<Response> {
+    const originHeader = request.headers.get('origin');
+    if (!isAllowedMediaCorsOrigin(originHeader)) {
+      return new Response('Forbidden: Disallowed CORS origin.', { status: 403 });
+    }
+    const corsHeaders = buildMediaCorsHeaders(originHeader);
+
+    if (request.method === 'OPTIONS') {
+      return new Response(null, { status: 204, headers: corsHeaders });
+    }
     if (request.method !== 'GET' && request.method !== 'HEAD') {
-      return new Response('Method Not Allowed', { status: 405 });
+      return new Response('Method Not Allowed', { status: 405, headers: corsHeaders });
     }
 
     const parsed = parseProfileMediaRequest(request.url);
     if (!parsed) {
-      return new Response('Forbidden: Invalid profile media URL.', { status: 403 });
+      return new Response('Forbidden: Invalid profile media URL.', { status: 403, headers: corsHeaders });
     }
 
     let safeFilePath: string | null = null;
@@ -776,21 +820,28 @@ export class ProfileService {
     }
 
     if (!safeFilePath) {
-      return new Response('Not Found', { status: 404, headers: { 'Cache-Control': 'no-store' } });
+      return new Response('Not Found', {
+        status: 404,
+        headers: { ...corsHeaders, 'Cache-Control': 'no-store' },
+      });
     }
 
     let stat;
     try {
       stat = await fsPromises.stat(safeFilePath);
     } catch {
-      return new Response('Not Found', { status: 404, headers: { 'Cache-Control': 'no-store' } });
+      return new Response('Not Found', {
+        status: 404,
+        headers: { ...corsHeaders, 'Cache-Control': 'no-store' },
+      });
     }
 
     if (!stat.isFile()) {
-      return new Response('Forbidden', { status: 403 });
+      return new Response('Forbidden', { status: 403, headers: corsHeaders });
     }
 
     const headers = new Headers({
+      ...corsHeaders,
       'Content-Type': mimeType,
       'Content-Length': String(stat.size),
       ETag: `"${hash || stat.mtimeMs}"`,

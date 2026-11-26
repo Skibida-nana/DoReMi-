@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import type { FfmpegCapabilities } from '../../../shared/types/codec-engine';
 import type { CodecManager } from './codec-manager';
+import { type CodecProcessAdapter, defaultNativeProcessAdapter } from './process-execution';
 
 const DEFAULT_CAPABILITY_TIMEOUT_MS = 5000;
 const MAX_CAPABILITY_OUTPUT_BYTES = 512 * 1024;
@@ -84,6 +85,7 @@ async function runBoundedFfmpegQuery(
   executablePath: string,
   args: string[],
   timeoutMs: number,
+  processAdapter: CodecProcessAdapter = defaultNativeProcessAdapter,
 ): Promise<string | null> {
   return new Promise((resolve) => {
     let stdout = '';
@@ -91,8 +93,7 @@ async function runBoundedFfmpegQuery(
     let child: ReturnType<typeof spawn>;
 
     try {
-      child = spawn(executablePath, args, {
-        shell: false,
+      child = processAdapter.spawn(executablePath, args, {
         windowsHide: true,
         stdio: ['ignore', 'pipe', 'ignore'],
       });
@@ -152,12 +153,15 @@ export class FfmpegCapabilityDetector {
   private readonly cache = new Map<string, CachedFfmpegCapabilities>();
   private readonly inFlight = new Map<string, Promise<FfmpegCapabilities | null>>();
   private readonly timeoutMs: number;
+  private readonly processAdapter: CodecProcessAdapter;
 
   constructor(
     private readonly codecManager: CodecManager,
-    options?: { timeoutMs?: number },
+    options?: { timeoutMs?: number; processAdapter?: CodecProcessAdapter },
   ) {
     this.timeoutMs = options?.timeoutMs ?? DEFAULT_CAPABILITY_TIMEOUT_MS;
+    this.processAdapter =
+      options?.processAdapter ?? codecManager.getProcessAdapter?.() ?? defaultNativeProcessAdapter;
   }
 
   clearCache(): void {
@@ -200,6 +204,7 @@ export class FfmpegCapabilityDetector {
           canonicalPath,
           ['-hide_banner', '-encoders'],
           this.timeoutMs,
+          this.processAdapter,
         );
         if (encodersRaw === null) {
           return null;
@@ -209,16 +214,19 @@ export class FfmpegCapabilityDetector {
           canonicalPath,
           ['-hide_banner', '-decoders'],
           this.timeoutMs,
+          this.processAdapter,
         );
         const formatsRaw = await runBoundedFfmpegQuery(
           canonicalPath,
           ['-hide_banner', '-formats'],
           this.timeoutMs,
+          this.processAdapter,
         );
         const sampleFmtsRaw = await runBoundedFfmpegQuery(
           canonicalPath,
           ['-hide_banner', '-sample_fmts'],
           this.timeoutMs,
+          this.processAdapter,
         );
 
         const capabilities: FfmpegCapabilities = {

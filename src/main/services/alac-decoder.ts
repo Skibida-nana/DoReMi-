@@ -29,6 +29,8 @@ function readUint64Safe(buf: Buffer, offset: number): number {
   return high * 0x1_0000_0000 + low;
 }
 
+const VALID_ALAC_BIT_DEPTHS = new Set([8, 16, 20, 24, 32]);
+
 function parseAlacSpecificConfigFromSampleEntry(entryBuf: Buffer): Mp4AudioCodecProbe {
   // AudioSampleEntry header is 8 (box header) + 28 (version 0) bytes; QuickTime v1/v2 can be longer.
   // Scan inside the sample entry for the child 'alac' box containing the 24-byte ALACSpecificConfig.
@@ -57,14 +59,23 @@ function parseAlacSpecificConfigFromSampleEntry(entryBuf: Buffer): Mp4AudioCodec
       if (boxType === 'alac' && boxSize >= 36) {
         // 8 bytes box header + 4 bytes version/flags + 24 bytes ALACSpecificConfig
         const cfg = pos + 12;
+        if (cfg + 24 > pos + boxSize) {
+          return null;
+        }
+        const frameLength = entryBuf.readUInt32BE(cfg);
         const bitDepth = entryBuf.readUInt8(cfg + 5);
         const channels = entryBuf.readUInt8(cfg + 9);
         const sampleRateHz = entryBuf.readUInt32BE(cfg + 20);
+        // Reject clearly corrupted ALACSpecificConfig structs (frameLength === 0, invalid bitDepth/channels/rate)
+        const configValid = frameLength > 0 && frameLength <= 65_536;
         return {
           codec: 'alac',
-          sampleRateHz: sampleRateHz > 0 && sampleRateHz <= 768_000 ? sampleRateHz : null,
-          bitDepth: bitDepth >= 8 && bitDepth <= 32 ? bitDepth : null,
-          channels: channels >= 1 && channels <= 8 ? channels : null,
+          sampleRateHz:
+            configValid && Number.isInteger(sampleRateHz) && sampleRateHz > 0 && sampleRateHz <= 768_000
+              ? sampleRateHz
+              : null,
+          bitDepth: configValid && VALID_ALAC_BIT_DEPTHS.has(bitDepth) ? bitDepth : null,
+          channels: configValid && channels >= 1 && channels <= 8 ? channels : null,
         };
       }
       pos += boxSize;
@@ -137,9 +148,34 @@ function scanStsdBox(stsdBuf: Buffer): Mp4AudioCodecProbe | null {
 
 const CONTAINER_BOXES = new Set(['moov', 'trak', 'mdia', 'minf', 'stbl']);
 
+function readMediaHandlerType(buf: Buffer, start: number, end: number): string | null {
+  let offset = start;
+  while (offset + 8 <= end) {
+    let size = buf.readUInt32BE(offset);
+    const type = buf.toString('ascii', offset + 4, offset + 8);
+    let headerLen = 8;
+    if (size === 1) {
+      if (offset + 16 > end) break;
+      size = readUint64Safe(buf, offset + 8);
+      headerLen = 16;
+    } else if (size === 0) {
+      size = end - offset;
+    }
+    if (size < headerLen || offset + size > end) {
+      break;
+    }
+    if (type === 'hdlr' && offset + headerLen + 12 <= offset + size) {
+      // FullBox (4 bytes version/flags) + pre_defined (4 bytes) + handler_type (4 ASCII chars)
+      return buf.toString('ascii', offset + headerLen + 8, offset + headerLen + 12);
+    }
+    offset += size;
+  }
+  return null;
+}
+
 function scanMoovContainer(buf: Buffer, start: number, end: number): Mp4AudioCodecProbe | null {
   let offset = start;
-  let aacFallback: Mp4AudioCodecProbe | null = null;
+  let firstAudioTrackHit: Mp4AudioCodecProbe | null = null;
 
   while (offset + 8 <= end) {
     let size = buf.readUInt32BE(offset);
@@ -160,28 +196,43 @@ function scanMoovContainer(buf: Buffer, start: number, end: number): Mp4AudioCod
       break;
     }
 
+    if (type === 'mdia') {
+      // Strictly skip non-audio tracks (e.g. 'vide' video or attached artwork tracks)
+      const handler = readMediaHandlerType(buf, offset + headerLen, offset + size);
+      if (handler !== null && handler !== 'soun') {
+        offset += size;
+        continue;
+      }
+    }
+
     if (type === 'stsd') {
       const hit = scanStsdBox(buf.subarray(offset, offset + size));
-      if (hit?.codec === 'alac') {
-        return hit;
-      }
-      if (hit?.codec === 'aac') {
-        aacFallback = hit;
+      if (hit && !firstAudioTrackHit) {
+        firstAudioTrackHit = hit;
+        if (hit.codec === 'alac') {
+          return hit;
+        }
       }
     } else if (CONTAINER_BOXES.has(type)) {
       const nested = scanMoovContainer(buf, offset + headerLen, offset + size);
-      if (nested?.codec === 'alac') {
-        return nested;
-      }
-      if (nested?.codec === 'aac') {
-        aacFallback = nested;
+      if (nested) {
+        // Respect primary audio track order (`trak` #1 = `0:a:0`) instead of letting a secondary track override
+        if (!firstAudioTrackHit) {
+          firstAudioTrackHit = nested;
+          if (type === 'trak') {
+            return nested;
+          }
+        }
+        if (type !== 'moov' && nested.codec === 'alac') {
+          return nested;
+        }
       }
     }
 
     offset += size;
   }
 
-  return aacFallback;
+  return firstAudioTrackHit;
 }
 
 /**

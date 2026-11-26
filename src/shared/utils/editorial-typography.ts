@@ -247,13 +247,15 @@ export function computeEditorialTypographyMetrics(options: {
     Array.from(options.topText.trim()).length,
     Array.from(options.bottomText.trim()).length,
   );
-  const letterSpacingEm = longest > 18 ? 0.01 : longest > 12 ? 0.025 : 0.045;
+  const combined = `${options.topText} ${options.bottomText}`.normalize('NFC');
+  const hasExtendedMarks = /[^\u0000-\u007F]/.test(combined);
+  const letterSpacingEm = longest > 18 ? 0.01 : longest > 12 ? 0.022 : 0.036;
 
   return {
     topFontSizePx,
     bottomFontSizePx,
     letterSpacingEm,
-    lineHeight: 0.94,
+    lineHeight: hasExtendedMarks ? 1.12 : 1.02,
     topLineLongWarning: Array.from(options.topText.trim()).length > RECOMMENDED_EDITORIAL_TEXT_LENGTH,
     bottomLineLongWarning:
       Array.from(options.bottomText.trim()).length > RECOMMENDED_EDITORIAL_TEXT_LENGTH,

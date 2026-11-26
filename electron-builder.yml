@@ -11,14 +11,22 @@ files:
   - package.json
   - "!src/**"
   - "!tests/**"
+  - "!scripts/**"
   - "!dist/**"
   - "!release/**"
+  - "!.ai-context/**"
+  - "!.github/**"
+  - "!*.md"
   - "!**/*.map"
 
 # Native addon better-sqlite3 MUST be unpacked from ASAR so Windows can load .node binaries
 asar: true
 asarUnpack:
   - "node_modules/better-sqlite3/**"
+
+extraResources:
+  - from: resources/codecs
+    to: codecs
 
 # Automatically rebuild native modules for target Electron version during packaging
 npmRebuild: true

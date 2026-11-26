@@ -1,58 +1,73 @@
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
 import { Disc3, Play, Search, X } from 'lucide-react';
 import { DEFAULT_DOREMI_ARTWORK_URL } from '../assets/default-artwork';
-import { PROTOTYPE_ALBUMS } from '../data/prototype-catalog';
-import { useLibraryState } from '../stores/library-store';
+import { libraryStore, useLibraryState } from '../stores/library-store';
 import { uiStore, useUiState } from '../stores/ui-store';
 import { formatDurationSeconds } from '../utils/formatters';
-import { matchesVietnameseQuery } from '../utils/vietnamese-search';
+import { useWindowedListSlice } from '../utils/use-windowed-slice';
+import {
+  matchesNormalizedVietnameseQuery,
+  normalizeVietnameseText,
+} from '../utils/vietnamese-search';
 
-const QUICK_SUGGESTIONS = ['den vau', 'anh den', 'thang tu', 'wav', 'afterlight'];
+const QUICK_SUGGESTIONS = ['flac', '24-bit', 'alac', 'wav'];
 
 export function SearchPage() {
   const ui = useUiState();
   const library = useLibraryState();
   const query = ui.searchQuery;
   const accent = uiStore.getUserAccentPalette();
+  const songsContainerRef = useRef<HTMLDivElement | null>(null);
 
-  const allTracks = uiStore.getUnifiedTracks();
+  const allTracks = useMemo(() => uiStore.getUnifiedTracks(), [library.tracks]);
+  const allAlbums = useMemo(() => uiStore.getDerivedAlbums(), [library.tracks]);
 
   const results = useMemo(() => {
-    const trimmed = query.trim();
-    if (!trimmed) {
+    const normalizedQuery = normalizeVietnameseText(query);
+    if (!normalizedQuery) {
       return { songs: [], albums: [], artists: [], playlists: [] };
     }
 
     const songs = allTracks.filter(
       (t) =>
-        matchesVietnameseQuery(t.title, trimmed) ||
-        matchesVietnameseQuery(t.artist, trimmed) ||
-        matchesVietnameseQuery(t.albumTitle, trimmed) ||
-        matchesVietnameseQuery(t.formatBadge, trimmed),
+        matchesNormalizedVietnameseQuery(t.title, normalizedQuery) ||
+        matchesNormalizedVietnameseQuery(t.artist, normalizedQuery) ||
+        matchesNormalizedVietnameseQuery(t.albumTitle, normalizedQuery) ||
+        matchesNormalizedVietnameseQuery(t.formatBadge, normalizedQuery),
     );
 
-    const albums = PROTOTYPE_ALBUMS.filter(
+    const albums = allAlbums.filter(
       (a) =>
-        matchesVietnameseQuery(a.title, trimmed) ||
-        matchesVietnameseQuery(a.artist, trimmed) ||
-        matchesVietnameseQuery(a.genre, trimmed),
+        matchesNormalizedVietnameseQuery(a.title, normalizedQuery) ||
+        matchesNormalizedVietnameseQuery(a.artist, normalizedQuery) ||
+        matchesNormalizedVietnameseQuery(a.genre, normalizedQuery),
     );
 
     const artistNames = Array.from(
       new Set([
         ...allTracks.map((t) => t.artist),
-        ...PROTOTYPE_ALBUMS.map((a) => a.artist),
+        ...allAlbums.map((a) => a.artist),
       ]),
-    ).filter((name) => matchesVietnameseQuery(name, trimmed));
+    ).filter((name) => matchesNormalizedVietnameseQuery(name, normalizedQuery));
 
     const playlists = ui.playlists.filter(
       (p) =>
-        matchesVietnameseQuery(p.name, trimmed) ||
-        matchesVietnameseQuery(p.description, trimmed),
+        matchesNormalizedVietnameseQuery(p.name, normalizedQuery) ||
+        matchesNormalizedVietnameseQuery(p.description, normalizedQuery),
     );
 
     return { songs, albums, artists: artistNames, playlists };
-  }, [query, allTracks, ui.playlists]);
+  }, [query, allTracks, allAlbums, ui.playlists]);
+
+  const songSlice = useWindowedListSlice({
+    containerRef: songsContainerRef,
+    totalItems: results.songs.length,
+    itemHeightPx: 62,
+  });
+  const visibleSongs = useMemo(
+    () => results.songs.slice(songSlice.startIndex, songSlice.endIndex),
+    [results.songs, songSlice.startIndex, songSlice.endIndex],
+  );
 
   const hasQuery = query.trim().length > 0;
   const totalCount =
@@ -117,10 +132,7 @@ export function SearchPage() {
             Tìm kiếm hoàn toàn offline — hỗ trợ tiếng Việt không dấu & Unicode CJK
           </p>
           <p className="mt-1.5 max-w-[460px] text-[13px] text-[var(--text-muted)]">
-            Nhập <strong className="text-[var(--text-primary)]">den vau</strong> để tìm{' '}
-            <strong className="text-[var(--text-primary)]">Đen Vâu & Band</strong>, hoặc nhập{' '}
-            <strong className="text-[var(--text-primary)]">anh den</strong> để tìm{' '}
-            <strong className="text-[var(--text-primary)]">Ánh Đèn Sau Mưa</strong>.
+            Hỗ trợ tìm tên bài hát, nghệ sĩ, album, định dạng FLAC / ALAC / WAV và chữ tiếng Việt có dấu hoặc không dấu.
           </p>
         </div>
       ) : totalCount === 0 ? (
@@ -141,20 +153,34 @@ export function SearchPage() {
               <h2 className="font-display text-[17px] font-semibold text-[var(--text-primary)]">
                 Bài hát ({results.songs.length})
               </h2>
-              <div className="lp-glass-panel divide-y divide-[var(--border-subtle)] overflow-hidden rounded-[22px]">
-                {results.songs.map((track) => (
+              <div
+                ref={songsContainerRef}
+                className="lp-glass-panel divide-y divide-[var(--border-subtle)] overflow-hidden rounded-[22px]"
+              >
+                {songSlice.topSpacerPx > 0 && (
+                  <div aria-hidden="true" style={{ height: `${songSlice.topSpacerPx}px` }} />
+                )}
+                {visibleSongs.map((track) => (
                   <button
                     key={track.id}
                     type="button"
                     onClick={() => {
+                      const searchContext = {
+                        contextId: `search-${query.trim()}`,
+                        label: `Kết quả: ${query.trim()}`,
+                        kind: 'search' as const,
+                        trackIds: results.songs
+                          .filter((s) => s.status === 'available')
+                          .map((s) => s.id),
+                      };
                       if (track.source === 'local') {
-                        const real = library.tracks.find((t) => t.id === track.id);
+                        const real = libraryStore.getTrackById(track.id);
                         if (real) {
-                          void uiStore.playLocalElectronTrack(real);
+                          void uiStore.playLocalElectronTrack(real, searchContext);
                           return;
                         }
                       }
-                      uiStore.playSampleTrack(track.id);
+                      uiStore.playSampleTrack(track.id, false, searchContext);
                     }}
                     className="flex h-[62px] w-full items-center gap-4 px-5 text-left transition hover:bg-[var(--surface-glass-light)]"
                   >
@@ -186,6 +212,9 @@ export function SearchPage() {
                     </span>
                   </button>
                 ))}
+                {songSlice.bottomSpacerPx > 0 && (
+                  <div aria-hidden="true" style={{ height: `${songSlice.bottomSpacerPx}px` }} />
+                )}
               </div>
             </section>
           )}
@@ -227,7 +256,7 @@ export function SearchPage() {
               </h2>
               <div className="flex flex-wrap gap-3">
                 {results.artists.map((artistName) => {
-                  const album = PROTOTYPE_ALBUMS.find((a) => a.artist === artistName);
+                  const album = allAlbums.find((a) => a.artist === artistName);
                   return (
                     <button
                       key={artistName}

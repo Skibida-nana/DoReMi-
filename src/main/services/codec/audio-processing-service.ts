@@ -34,6 +34,12 @@ import {
 import { AudioAnalyzerService, runFfprobeJsonDetailed } from './audio-analyzer';
 import type { CodecManager } from './codec-manager';
 import { FfmpegCapabilityDetector } from './ffmpeg-capabilities';
+import {
+  type CodecProcessAdapter,
+  defaultFsPathSafetyOps,
+  defaultNativeProcessAdapter,
+  type FsPathSafetyOps,
+} from './process-execution';
 import { ResourcePolicyManager } from './resource-policy';
 
 interface InternalJobEntry {
@@ -63,6 +69,10 @@ export interface AudioProcessingServiceOptions {
   onQueueUpdated?: (snapshot: ConversionQueueSnapshot) => void;
   onJobProgress?: (event: ConversionProgressEvent) => void;
   onFileConverted?: (outputPath: string, autoImport: boolean) => Promise<void>;
+  /** Injectable process spawner for cross-platform mock CLI tests (`Phase 4.5B`). */
+  processAdapter?: CodecProcessAdapter;
+  /** Injectable canonical path operations for symlink/junction/hardlink tests (`Phase 4.5C`). */
+  fsPathOps?: FsPathSafetyOps;
 }
 
 const MAX_RETAINED_JOBS = 200;
@@ -88,15 +98,18 @@ export function normalizeReservationKey(
   return platform === 'win32' ? resolved.toLowerCase() : resolved;
 }
 
-async function resolveCanonicalPathAllowingMissingLeaf(targetPath: string): Promise<string> {
+async function resolveCanonicalPathAllowingMissingLeaf(
+  targetPath: string,
+  fsOps: FsPathSafetyOps = defaultFsPathSafetyOps,
+): Promise<string> {
   const resolved = path.resolve(targetPath);
   try {
-    return await fs.realpath(resolved);
+    return await fsOps.realpath(resolved);
   } catch {
     const parent = path.dirname(resolved);
     const leaf = path.basename(resolved);
     try {
-      const realParent = await fs.realpath(parent);
+      const realParent = await fsOps.realpath(parent);
       return path.join(realParent, leaf);
     } catch {
       return resolved;
@@ -114,6 +127,7 @@ export async function arePathsSamePhysicalFile(
   pathA: string,
   pathB: string,
   platform: NodeJS.Platform = process.platform,
+  fsOps: FsPathSafetyOps = defaultFsPathSafetyOps,
 ): Promise<boolean> {
   const keyA = normalizeReservationKey(pathA, platform);
   const keyB = normalizeReservationKey(pathB, platform);
@@ -122,8 +136,8 @@ export async function arePathsSamePhysicalFile(
   }
 
   const [canonA, canonB] = await Promise.all([
-    resolveCanonicalPathAllowingMissingLeaf(pathA),
-    resolveCanonicalPathAllowingMissingLeaf(pathB),
+    resolveCanonicalPathAllowingMissingLeaf(pathA, fsOps),
+    resolveCanonicalPathAllowingMissingLeaf(pathB, fsOps),
   ]);
   if (normalizeReservationKey(canonA, platform) === normalizeReservationKey(canonB, platform)) {
     return true;
@@ -131,8 +145,8 @@ export async function arePathsSamePhysicalFile(
 
   // Hard link & mount-alias detection via (dev, ino)
   const [statA, statB] = await Promise.all([
-    fs.stat(pathA).catch(() => null),
-    fs.stat(pathB).catch(() => null),
+    fsOps.stat(pathA).catch(() => null),
+    fsOps.stat(pathB).catch(() => null),
   ]);
   if (
     statA &&
@@ -157,12 +171,14 @@ export async function validateOutputPathSafety(params: {
   candidatePath: string;
   outputDir: string;
   platform?: NodeJS.Platform;
+  fsOps?: FsPathSafetyOps;
 }): Promise<{ safe: boolean; reason?: string }> {
   const platform = params.platform ?? process.platform;
+  const fsOps = params.fsOps ?? defaultFsPathSafetyOps;
   const sep: '/' | '\\' = platform === 'win32' ? '\\' : '/';
 
-  const realOutputDir = await resolveCanonicalPathAllowingMissingLeaf(params.outputDir);
-  const realCandidate = await resolveCanonicalPathAllowingMissingLeaf(params.candidatePath);
+  const realOutputDir = await resolveCanonicalPathAllowingMissingLeaf(params.outputDir, fsOps);
+  const realCandidate = await resolveCanonicalPathAllowingMissingLeaf(params.candidatePath, fsOps);
 
   if (!isPathStrictlyWithinDirectory(realCandidate, realOutputDir, sep)) {
     return {
@@ -172,7 +188,7 @@ export async function validateOutputPathSafety(params: {
   }
 
   // Also check lstat in case candidate itself is a symlink pointing outside or to source
-  const lstat = await fs.lstat(params.candidatePath).catch(() => null);
+  const lstat = await fsOps.lstat(params.candidatePath).catch(() => null);
   if (lstat?.isSymbolicLink()) {
     return {
       safe: false,
@@ -180,7 +196,7 @@ export async function validateOutputPathSafety(params: {
     };
   }
 
-  if (await arePathsSamePhysicalFile(params.sourcePath, params.candidatePath, platform)) {
+  if (await arePathsSamePhysicalFile(params.sourcePath, params.candidatePath, platform, fsOps)) {
     return {
       safe: false,
       reason: 'Đường dẫn đích trỏ đến cùng một tệp vật lý với tệp nguồn (trùng đường dẫn, symlink hoặc hard link).',
@@ -311,8 +327,9 @@ function doesCodecMatchTargetFormat(codecName: string, targetFormat: ConvertTarg
 async function hashDecodedPcmStream(
   ffmpegPath: string,
   filePath: string,
-  pcmFormat: 's16le' | 's24le' | 's32le' | 'f32le',
+  pcmFormat: 's16le' | 's24le' | 's32le' | 'f32le' | 'f64le',
   timeoutMs = 60_000,
+  processAdapter: CodecProcessAdapter = defaultNativeProcessAdapter,
 ): Promise<string | null> {
   return new Promise((resolve) => {
     const hash = crypto.createHash('sha256');
@@ -320,7 +337,7 @@ async function hashDecodedPcmStream(
     let totalBytes = 0;
     let child: ChildProcess;
     try {
-      child = spawn(
+      child = processAdapter.spawn(
         ffmpegPath,
         [
           '-hide_banner',
@@ -341,7 +358,6 @@ async function hashDecodedPcmStream(
           'pipe:1',
         ],
         {
-          shell: false,
           windowsHide: true,
           stdio: ['ignore', 'pipe', 'ignore'],
         },
@@ -396,19 +412,23 @@ export async function compareDecodedPcmStreams(params: {
   sourcePath: string;
   outputPath: string;
   sourceSpec?: SourceAudioSpec;
+  processAdapter?: CodecProcessAdapter;
 }): Promise<{ status: PcmComparisonStatus; note: string }> {
-  const pcmFormat: 's16le' | 's24le' | 's32le' | 'f32le' =
+  const pcmFormat: 's16le' | 's24le' | 's32le' | 'f32le' | 'f64le' =
     params.sourceSpec?.sampleFormat === 'pcm-float'
-      ? 'f32le'
+      ? params.sourceSpec.bitDepth === 64
+        ? 'f64le'
+        : 'f32le'
       : params.sourceSpec?.bitDepth === 16
         ? 's16le'
         : params.sourceSpec?.bitDepth === 32
           ? 's32le'
           : 's24le';
 
+  const runner = params.processAdapter ?? defaultNativeProcessAdapter;
   const [srcHash, outHash] = await Promise.all([
-    hashDecodedPcmStream(params.ffmpegPath, params.sourcePath, pcmFormat),
-    hashDecodedPcmStream(params.ffmpegPath, params.outputPath, pcmFormat),
+    hashDecodedPcmStream(params.ffmpegPath, params.sourcePath, pcmFormat, 60_000, runner),
+    hashDecodedPcmStream(params.ffmpegPath, params.outputPath, pcmFormat, 60_000, runner),
   ]);
 
   if (!srcHash || !outHash) {
@@ -552,21 +572,30 @@ export async function resolveConversionOutputPath(params: {
   conflictPolicy: AudioConvertOptions['conflictPolicy'];
   reservedPaths?: ReadonlySet<string>;
   platform?: NodeJS.Platform;
+  fsOps?: FsPathSafetyOps;
 }): Promise<{ outputPath: string; skipped: boolean; conflictWithReservation?: boolean }> {
   const platform = params.platform ?? process.platform;
+  const fsOps = params.fsOps ?? defaultFsPathSafetyOps;
   const sourceResolved = path.resolve(params.sourcePath);
   const rawBase = path.basename(sourceResolved, path.extname(sourceResolved));
   const safeBase = sanitizeOutputBaseName(rawBase);
   const normalizedExt = params.extension.startsWith('.') ? params.extension : `.${params.extension}`;
 
+  const normalizedReservedSet = new Set<string>();
+  if (params.reservedPaths) {
+    for (const p of params.reservedPaths) {
+      normalizedReservedSet.add(normalizeReservationKey(p, platform));
+    }
+  }
+
   const isReserved = (p: string): boolean =>
-    Boolean(params.reservedPaths?.has(normalizeReservationKey(p, platform)));
+    normalizedReservedSet.has(normalizeReservationKey(p, platform));
 
   const isOccupied = async (p: string): Promise<boolean> =>
     isReserved(p) || (await pathExists(p));
 
   let candidate = path.resolve(params.outputDir, `${safeBase}${normalizedExt}`);
-  const isSameAsSource = await arePathsSamePhysicalFile(sourceResolved, candidate, platform);
+  const isSameAsSource = await arePathsSamePhysicalFile(sourceResolved, candidate, platform, fsOps);
 
   if (isSameAsSource) {
     // NEVER mutate or overwrite the original source file even if overwrite policy is selected
@@ -579,6 +608,7 @@ export async function resolveConversionOutputPath(params: {
     candidatePath: candidate,
     outputDir: params.outputDir,
     platform,
+    fsOps,
   });
   if (!safety.safe) {
     // Fall back to safe non-conflicting renamed filename inside outputDir
@@ -608,6 +638,7 @@ export async function resolveConversionOutputPath(params: {
       candidatePath: candidate,
       outputDir: params.outputDir,
       platform,
+      fsOps,
     });
     if (!overwriteSafety.safe) {
       throw new Error(overwriteSafety.reason ?? 'Từ chối ghi đè đường dẫn đích không an toàn.');
@@ -620,7 +651,7 @@ export async function resolveConversionOutputPath(params: {
     const numbered = path.resolve(params.outputDir, `${safeBase} (${suffix})${normalizedExt}`);
     if (
       !(await isOccupied(numbered)) &&
-      !(await arePathsSamePhysicalFile(sourceResolved, numbered, platform))
+      !(await arePathsSamePhysicalFile(sourceResolved, numbered, platform, fsOps))
     ) {
       return { outputPath: numbered, skipped: false };
     }
@@ -655,10 +686,13 @@ export class AudioProcessingService {
   private readonly onQueueUpdated?: (snapshot: ConversionQueueSnapshot) => void;
   private readonly onJobProgress?: (event: ConversionProgressEvent) => void;
   private readonly onFileConverted?: (outputPath: string, autoImport: boolean) => Promise<void>;
+  private readonly processAdapter: CodecProcessAdapter;
+  private readonly fsPathOps: FsPathSafetyOps;
 
   private readonly jobs = new Map<string, InternalJobEntry>();
   private readonly jobOrder: string[] = [];
   private readonly reservedOutputPaths = new Map<string, string>();
+  private readonly terminalWaiters = new Map<string, Set<() => void>>();
   private readonly unsubscribePolicy: () => void;
   private readonly detachCodecManager: () => void;
 
@@ -669,13 +703,22 @@ export class AudioProcessingService {
 
   constructor(options: AudioProcessingServiceOptions) {
     this.codecManager = options.codecManager;
+    this.processAdapter =
+      options.processAdapter ?? options.codecManager.getProcessAdapter?.() ?? defaultNativeProcessAdapter;
+    this.fsPathOps = options.fsPathOps ?? defaultFsPathSafetyOps;
     this.resourcePolicy =
       options.resourcePolicy ?? new ResourcePolicyManager(DEFAULT_RESOURCE_MODE);
     this.audioAnalyzer =
       options.audioAnalyzer ??
-      new AudioAnalyzerService(this.codecManager, { resourcePolicy: this.resourcePolicy });
+      new AudioAnalyzerService(this.codecManager, {
+        resourcePolicy: this.resourcePolicy,
+        processAdapter: this.processAdapter,
+      });
     this.ffmpegCapabilities =
-      options.ffmpegCapabilities ?? new FfmpegCapabilityDetector(this.codecManager);
+      options.ffmpegCapabilities ??
+      new FfmpegCapabilityDetector(this.codecManager, {
+        processAdapter: this.processAdapter,
+      });
     this.platform = options.platform ?? process.platform;
     this.startupTimeoutMs = options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS;
     this.inactivityTimeoutMs = options.inactivityTimeoutMs ?? DEFAULT_INACTIVITY_TIMEOUT_MS;
@@ -945,6 +988,7 @@ export class AudioProcessingService {
       entry.record.errorMessage = 'Đã hủy bởi người dùng.';
       this.emitJobProgress(entry.record);
       this.emitQueueSnapshot();
+      this.notifyJobTerminalIfSettled(entry);
       return this.getQueueSnapshot();
     }
 
@@ -977,6 +1021,7 @@ export class AudioProcessingService {
         if (entry.cleanupPromise === chainedCleanup) {
           entry.cleanupPromise = null;
         }
+        this.notifyJobTerminalIfSettled(entry);
       });
       entry.cleanupPromise = chainedCleanup;
     }
@@ -1058,6 +1103,137 @@ export class AudioProcessingService {
     return this.getQueueSnapshot();
   }
 
+  private isTerminalStatus(status: ConversionJobRecord['status']): boolean {
+    return status === 'completed' || status === 'skipped' || status === 'failed' || status === 'canceled';
+  }
+
+  private isEntrySettled(entry: InternalJobEntry): boolean {
+    return (
+      this.isTerminalStatus(entry.record.status) &&
+      !entry.cleaningUp &&
+      entry.cleanupPromise === null
+    );
+  }
+
+  private cloneJobRecord(record: ConversionJobRecord): ConversionJobRecord {
+    return {
+      ...record,
+      warnings: record.warnings ? [...record.warnings] : undefined,
+      verification: record.verification ? { ...record.verification } : null,
+    };
+  }
+
+  private notifyJobTerminalIfSettled(entry: InternalJobEntry): void {
+    if (!this.isEntrySettled(entry)) {
+      return;
+    }
+    const waiters = this.terminalWaiters.get(entry.record.id);
+    if (!waiters || waiters.size === 0) {
+      return;
+    }
+    this.terminalWaiters.delete(entry.record.id);
+    for (const cb of [...waiters]) {
+      cb();
+    }
+  }
+
+  /**
+   * Event-driven terminal wait for one specific job ID (zero polling).
+   * Resolves only when the job reaches a terminal state AND temp/process cleanup has completed.
+   */
+  async waitForJob(
+    jobId: string,
+    options?: { timeoutMs?: number; signal?: AbortSignal },
+  ): Promise<ConversionJobRecord> {
+    const timeoutMs = Math.max(100, options?.timeoutMs ?? 60_000);
+    const signal = options?.signal;
+    const entry = this.jobs.get(jobId);
+    if (!entry) {
+      throw new Error(`Không tìm thấy job chuyển đổi "${jobId}" trong hàng đợi.`);
+    }
+    if (this.isEntrySettled(entry)) {
+      return this.cloneJobRecord(entry.record);
+    }
+    if (signal?.aborted) {
+      throw new Error(`Đã hủy chờ job "${jobId}".`);
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      let finished = false;
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      let waitersSet = this.terminalWaiters.get(jobId);
+      if (!waitersSet) {
+        waitersSet = new Set();
+        this.terminalWaiters.set(jobId, waitersSet);
+      }
+
+      const cleanupListeners = () => {
+        if (timer) {
+          clearTimeout(timer);
+          timer = null;
+        }
+        waitersSet?.delete(onSettled);
+        if (waitersSet && waitersSet.size === 0) {
+          this.terminalWaiters.delete(jobId);
+        }
+        signal?.removeEventListener('abort', onAbort);
+      };
+
+      const onSettled = () => {
+        if (finished) return;
+        finished = true;
+        cleanupListeners();
+        resolve();
+      };
+
+      const onAbort = () => {
+        if (finished) return;
+        finished = true;
+        cleanupListeners();
+        reject(new Error(`Đã hủy chờ job "${jobId}" bởi AbortSignal.`));
+      };
+
+      waitersSet.add(onSettled);
+      signal?.addEventListener('abort', onAbort, { once: true });
+      timer = setTimeout(() => {
+        if (finished) return;
+        finished = true;
+        cleanupListeners();
+        const snap = this.getQueueSnapshot();
+        const current = this.jobs.get(jobId)?.record;
+        reject(
+          new Error(
+            `Hết thời gian chờ job "${jobId}" (${timeoutMs} ms): status=${current?.status ?? 'missing'}, cleaningUp=${String(this.jobs.get(jobId)?.cleaningUp)}, queuePaused=${String(snap.isPaused)}, active=${snap.activeCount}, queued=${snap.queuedCount}.`,
+          ),
+        );
+      }, timeoutMs);
+
+      if (this.isEntrySettled(entry)) {
+        onSettled();
+      }
+    });
+
+    const finalEntry = this.jobs.get(jobId);
+    if (!finalEntry) {
+      throw new Error(`Job "${jobId}" đã bị xóa khỏi hàng đợi trước khi đọc kết quả.`);
+    }
+    return this.cloneJobRecord(finalEntry.record);
+  }
+
+  /**
+   * Waits cleanly until every job belonging to `batchId` settles into a terminal state.
+   */
+  async waitForBatch(
+    batchId: string,
+    options?: { timeoutMs?: number; signal?: AbortSignal },
+  ): Promise<ConversionQueueSnapshot> {
+    const ids = this.jobOrder.filter((id) => this.jobs.get(id)?.record.batchId === batchId);
+    for (const id of ids) {
+      await this.waitForJob(id, options);
+    }
+    return this.getQueueSnapshot();
+  }
+
   /**
    * Waits until all active/canceling jobs (including sequentially pumped queued jobs)
    * finish child process teardown and temp cleanup.
@@ -1114,6 +1290,7 @@ export class AudioProcessingService {
         }
         this.activeWorkers = Math.max(0, this.activeWorkers - 1);
         this.pumpQueue();
+        this.notifyJobTerminalIfSettled(nextEntry);
       });
       nextEntry.cleanupPromise = runPromise;
     }
@@ -1192,6 +1369,7 @@ export class AudioProcessingService {
         conflictPolicy: options.conflictPolicy,
         reservedPaths: reservedKeys,
         platform: this.platform,
+        fsOps: this.fsPathOps,
       });
 
       if (destResolution.conflictWithReservation) {
@@ -1303,17 +1481,26 @@ export class AudioProcessingService {
         record.warnings = [...(record.warnings ?? []), ...verification.warnings];
       }
 
+      if (entry.canceled) {
+        return;
+      }
+
       // 7. Final pre-commit Source File Protection & Symlink Escape Check
       const preCommitSafety = await validateOutputPathSafety({
         sourcePath: record.sourcePath,
         candidatePath: finalOutputPath,
         outputDir,
         platform: this.platform,
+        fsOps: this.fsPathOps,
       });
       if (!preCommitSafety.safe) {
         throw new Error(
           preCommitSafety.reason ?? 'Từ chối ghi đè đích không an toàn trước khi hoàn tất.',
         );
+      }
+
+      if (entry.canceled) {
+        return;
       }
 
       // 8. Atomic Commit with Backup-Before-Rename swap & recovery
@@ -1460,6 +1647,7 @@ export class AudioProcessingService {
           ffprobeRuntime.executablePath,
           params.tempOutputPath,
           VERIFY_FFPROBE_TIMEOUT_MS,
+          this.processAdapter,
         );
         if (probeRes.status !== 'ok' || !probeRes.data) {
           return {
@@ -1583,6 +1771,12 @@ export class AudioProcessingService {
         if (!ffmpegRuntime?.executablePath || ffmpegRuntime.sourceTier === 'builtin') {
           pcmComparisonStatus = 'skipped-no-ffmpeg';
           pcmComparisonNote = 'Cần FFmpeg tin cậy để chạy so sánh luồng PCM giải mã.';
+          if (status === 'verified-full') {
+            status = 'verified-container-only';
+          }
+          warnings.push(
+            'Đã yêu cầu verifyPcmOnLossless nhưng thiếu FFmpeg nên chỉ xác minh được mức header/metadata (không đánh dấu verified-full).',
+          );
         } else {
           this.codecManager.markCodecInUse('ffmpeg');
           try {
@@ -1591,10 +1785,11 @@ export class AudioProcessingService {
               sourcePath: params.sourcePath,
               outputPath: params.tempOutputPath,
               sourceSpec: params.sourceSpec,
+              processAdapter: this.processAdapter,
             });
             pcmComparisonStatus = cmp.status;
             pcmComparisonNote = cmp.note;
-            if (cmp.status === 'mismatch') {
+            if (cmp.status === 'mismatch' || cmp.status === 'failed') {
               return {
                 status: 'failed',
                 fileExists: true,
@@ -1669,8 +1864,7 @@ export class AudioProcessingService {
     if (steps.length === 1) {
       const step = steps[0];
       await new Promise<void>((resolve, reject) => {
-        const child = spawn(step.executablePath, step.args, {
-          shell: false,
+        const child = this.processAdapter.spawn(step.executablePath, step.args, {
           windowsHide: true,
           detached: useDetachedGroup,
           stdio: ['ignore', 'pipe', 'pipe'],
@@ -1822,14 +2016,12 @@ export class AudioProcessingService {
     // Two-stage piped native encoding: step[0] stdout -> step[1] stdin
     const [decoderStep, encoderStep] = steps;
     await new Promise<void>((resolve, reject) => {
-      const decChild = spawn(decoderStep.executablePath, decoderStep.args, {
-        shell: false,
+      const decChild = this.processAdapter.spawn(decoderStep.executablePath, decoderStep.args, {
         windowsHide: true,
         detached: useDetachedGroup,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
-      const encChild = spawn(encoderStep.executablePath, encoderStep.args, {
-        shell: false,
+      const encChild = this.processAdapter.spawn(encoderStep.executablePath, encoderStep.args, {
         windowsHide: true,
         detached: useDetachedGroup,
         stdio: ['pipe', 'ignore', 'pipe'],
@@ -1958,9 +2150,21 @@ export class AudioProcessingService {
         decChild.stdout.on('data', () => {
           markActivity();
         });
+        decChild.stdout.on('error', () => {
+          try {
+            encChild.stdin?.end();
+          } catch {
+            // ignore
+          }
+        });
         decChild.stdout.pipe(encChild.stdin);
         encChild.stdin.on('error', () => {
-          // Ignore EPIPE when encoder exits early
+          // Unpipe immediately on early encoder exit/EPIPE to prevent decoder stall or uncaught stream error
+          try {
+            decChild.stdout?.unpipe(encChild.stdin!);
+          } catch {
+            // ignore
+          }
         });
       }
 
@@ -1970,11 +2174,30 @@ export class AudioProcessingService {
       decChild.on('close', (code) => {
         decDone = true;
         decCode = code;
+        if (code !== 0 && !encDone && !entry.canceled) {
+          try {
+            decChild.stdout?.unpipe(encChild.stdin!);
+            encChild.stdin?.destroy();
+          } catch {
+            // ignore
+          }
+          void terminateProcessTree(encChild, {
+            platform: this.platform,
+            graceMs: this.processKillGraceMs,
+          });
+        }
         checkFinished();
       });
       encChild.on('close', (code) => {
         encDone = true;
         encCode = code;
+        try {
+          if (encChild.stdin) {
+            decChild.stdout?.unpipe(encChild.stdin);
+          }
+        } catch {
+          // ignore
+        }
         // If encoder exited prematurely while decoder is still running, stop decoder cleanly
         if (!decDone && code !== 0 && !entry.canceled) {
           void terminateProcessTree(decChild, {

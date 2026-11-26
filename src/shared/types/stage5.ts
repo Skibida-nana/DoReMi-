@@ -1,4 +1,5 @@
 import type { AudioLabSettings } from './audio-dsp';
+import type { PlaybackControlState } from './player';
 import type { ReplayGainSettings } from './stage6';
 
 export type ThemeMode = 'dark' | 'light';
@@ -85,6 +86,7 @@ export interface PersonalizationPreferences {
   transition: PlaybackTransitionSettings;
   replayGain?: ReplayGainSettings;
   audioLab?: AudioLabSettings;
+  playbackControls?: PlaybackControlState;
   autoScanFolders?: boolean;
   resumePlaybackOnStartup?: boolean;
   editorialTypography: EditorialTypographySettings;

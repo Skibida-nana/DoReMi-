@@ -2,6 +2,7 @@ export const MEDIA_PROTOCOL_SCHEME = 'lossless-media';
 export const MEDIA_PROTOCOL_HOST = 'track';
 export const MEDIA_ARTWORK_HOST = 'artwork';
 export const MEDIA_PROFILE_HOST = 'profile';
+export const MEDIA_PLAYLIST_HOST = 'playlist';
 
 export type ArtworkSizeVariant = 'full' | 'thumb';
 export type ProfileMediaKind = 'avatar' | 'background' | 'font';
@@ -286,4 +287,70 @@ export function parseProfileMediaRequest(rawUrl: string): ParsedProfileMediaRequ
   return null;
 }
 
+export function buildPlaylistArtworkUrl(
+  playlistId: string,
+  versionHash?: string | null,
+): string {
+  if (!isValidTrackUuid(playlistId)) {
+    throw new Error(`Invalid playlist UUID: ${String(playlistId)}`);
+  }
+  const params = new URLSearchParams();
+  if (versionHash && /^[0-9a-f]{4,64}$/i.test(versionHash)) {
+    params.set('v', versionHash.slice(0, 16));
+  }
+  const query = params.toString();
+  return `${MEDIA_PROTOCOL_SCHEME}://${MEDIA_PLAYLIST_HOST}/${playlistId.toLowerCase()}${query ? `?${query}` : ''}`;
+}
+
+export interface ParsedPlaylistArtworkRequest {
+  playlistId: string;
+  hasVersionToken: boolean;
+}
+
+export function parsePlaylistArtworkRequestFromMediaUrl(
+  rawUrl: string,
+): ParsedPlaylistArtworkRequest | null {
+  if (typeof rawUrl !== 'string' || rawUrl.length > 200) {
+    return null;
+  }
+  if (
+    rawUrl.includes('..') ||
+    rawUrl.includes('\\') ||
+    /%2f|%5c|%00/i.test(rawUrl)
+  ) {
+    return null;
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+
+  if (parsed.protocol !== `${MEDIA_PROTOCOL_SCHEME}:`) {
+    return null;
+  }
+  if (parsed.hostname !== MEDIA_PLAYLIST_HOST) {
+    return null;
+  }
+  if (parsed.hash || parsed.username || parsed.password || parsed.port) {
+    return null;
+  }
+
+  const candidate = parsed.pathname.startsWith('/')
+    ? parsed.pathname.slice(1)
+    : parsed.pathname;
+  if (candidate.includes('/') || !isValidTrackUuid(candidate)) {
+    return null;
+  }
+
+  const rawVersion = parsed.searchParams.get('v');
+  const hasVersionToken = Boolean(rawVersion && /^[0-9a-f]{4,64}$/i.test(rawVersion));
+
+  return {
+    playlistId: candidate.toLowerCase(),
+    hasVersionToken,
+  };
+}
 

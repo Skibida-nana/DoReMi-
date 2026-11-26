@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Archive,
   BarChart3,
@@ -20,6 +20,7 @@ import type {
   StatisticsTimeRange,
 } from '../../../shared/types/stage5';
 import { DEFAULT_DOREMI_ARTWORK_URL } from '../assets/default-artwork';
+import { AnchoredPopover } from '../components/OverlayLayer';
 import { useLibraryState } from '../stores/library-store';
 import { uiStore, useUiState } from '../stores/ui-store';
 
@@ -85,6 +86,7 @@ export function StatisticsPage() {
   const [dashboard, setDashboard] = useState<StatisticsDashboardData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [showRuleHint, setShowRuleHint] = useState(false);
+  const helpBtnRef = useRef<HTMLButtonElement | null>(null);
   const [hoveredDayIndex, setHoveredDayIndex] = useState<number | null>(null);
   const [hoveredHourIndex, setHoveredHourIndex] = useState<number | null>(null);
 
@@ -287,25 +289,37 @@ export function StatisticsPage() {
 
             <div className="relative ml-1">
               <button
+                ref={helpBtnRef}
                 type="button"
+                data-testid="stats-rule-help-btn"
+                aria-expanded={showRuleHint}
+                aria-haspopup="dialog"
                 onClick={() => setShowRuleHint((v) => !v)}
                 aria-label="Quy tắc tính lượt nghe hợp lệ"
                 className="lp-btn-ghost flex h-8 w-8 items-center justify-center rounded-full"
               >
                 <HelpCircle className="h-3.5 w-3.5" />
               </button>
-              {showRuleHint && (
-                <div className="lp-glass-pill absolute top-10 right-0 z-20 w-[300px] rounded-2xl p-3.5 text-[11.5px] leading-relaxed text-[var(--text-secondary)]">
-                  <p className="font-semibold text-[var(--text-primary)]">
-                    Quy tắc tính lượt nghe hợp lệ
-                  </p>
-                  <p className="mt-1">
-                    Bài từ 60 giây trở lên cần nghe thực tế ít nhất 30 giây. Bài dưới 60 giây cần
-                    nghe ít nhất 50% thời lượng. Thời gian tạm dừng, đang tải hoặc tua không được
-                    cộng vào thống kê.
-                  </p>
-                </div>
-              )}
+              <AnchoredPopover
+                open={showRuleHint}
+                anchorRef={helpBtnRef}
+                onClose={() => setShowRuleHint(false)}
+                placement="bottom"
+                align="end"
+                role="dialog"
+                testId="stats-rule-help-popover"
+                ariaLabel="Quy tắc tính lượt nghe hợp lệ"
+                className="lp-glass-pill w-[300px] rounded-2xl p-3.5 text-[11.5px] leading-relaxed text-[var(--text-secondary)]"
+              >
+                <p className="font-semibold text-[var(--text-primary)]">
+                  Quy tắc tính lượt nghe hợp lệ
+                </p>
+                <p className="mt-1">
+                  Bài từ 60 giây trở lên cần nghe thực tế ít nhất 30 giây. Bài dưới 60 giây cần nghe
+                  ít nhất 50% thời lượng. Thời gian tạm dừng, đang tải hoặc tua không được cộng vào
+                  thống kê.
+                </p>
+              </AnchoredPopover>
             </div>
           </div>
         )}

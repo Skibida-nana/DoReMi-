@@ -10,7 +10,8 @@ import {
   X,
 } from 'lucide-react';
 import { VinylTurntable, type StoryboardFrameNumber } from '../components/VinylTurntable';
-import { PROTOTYPE_ALBUMS, PROTOTYPE_TRACKS } from '../data/prototype-catalog';
+import { DEFAULT_DOREMI_ARTWORK_URL } from '../assets/default-artwork';
+import { DEFAULT_CATALOG_PALETTE } from '../data/prototype-catalog';
 import { uiStore, useUiState, type VinylSwapPhase } from '../stores/ui-store';
 
 interface FrameSpec {
@@ -75,7 +76,13 @@ export function VinylStoryboardPage() {
   const [liveAlbumIndex, setLiveAlbumIndex] = useState(0);
   const [showSampleDialog, setShowSampleDialog] = useState(false);
 
-  const liveAlbum = PROTOTYPE_ALBUMS[liveAlbumIndex];
+  const liveAlbum = {
+    id: 'storyboard',
+    title: 'Vinyl Storyboard',
+    artist: 'DoReMi',
+    coverUrl: DEFAULT_DOREMI_ARTWORK_URL,
+    palette: DEFAULT_CATALOG_PALETTE,
+  };
 
   const runLiveSwapDemo = () => {
     const nextIdx = liveAlbumIndex === 0 ? 4 : 0;
@@ -189,7 +196,7 @@ export function VinylStoryboardPage() {
           {/* 6-Frame Static Side-by-Side Storyboard Grid (Identical Camera Angle & Lighting) */}
           <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
             {STORYBOARD_FRAMES.map((item) => {
-              const album = PROTOTYPE_ALBUMS[item.albumIndex];
+              const album = liveAlbum;
               return (
                 <article
                   key={item.frame}
@@ -295,12 +302,12 @@ export function VinylStoryboardPage() {
             <div className="space-y-2">
               <div className="flex h-[56px] items-center gap-3.5 rounded-2xl border border-transparent bg-white/[0.03] px-3.5">
                 <img
-                  src={PROTOTYPE_TRACKS[1].coverUrl}
+                  src={DEFAULT_DOREMI_ARTWORK_URL}
                   alt=""
                   className="h-10 w-10 rounded-lg object-cover"
                 />
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-[13.5px] font-medium text-[#F5F6F8]">Violet Horizon</p>
+                  <p className="truncate text-[13.5px] font-medium text-[#F5F6F8]">Track Frame</p>
                   <p className="text-[11.5px] text-[#858B97]">Default Row · FLAC 24-bit / 96 kHz</p>
                 </div>
                 <span className="font-mono-tabular text-[12px] text-[#858B97]">3:58</span>
@@ -308,7 +315,7 @@ export function VinylStoryboardPage() {
 
               <div className="flex h-[56px] items-center gap-3.5 rounded-2xl border border-[#9276D8]/45 bg-[#9276D8]/12 px-3.5">
                 <img
-                  src={PROTOTYPE_TRACKS[0].coverUrl}
+                  src={DEFAULT_DOREMI_ARTWORK_URL}
                   alt=""
                   className="h-10 w-10 rounded-lg object-cover"
                 />

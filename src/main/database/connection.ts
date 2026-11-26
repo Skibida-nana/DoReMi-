@@ -1,12 +1,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
+import { verifyDatabaseIntegrity, type DatabaseIntegrityReport } from './integrity';
 import { hasPendingMigrations, runMigrations } from './migrations';
 
 export interface DatabaseConnection {
   readonly db: Database.Database;
   readonly dbPath: string;
   readonly backupPath: string | null;
+  readonly sqliteVersion: string;
+  readonly integrity: DatabaseIntegrityReport;
   close(): void;
 }
 
@@ -64,13 +67,34 @@ export function openLibraryDatabase(dbPath: string): DatabaseConnection {
   }
 
   runMigrations(db);
+  const integrity = verifyDatabaseIntegrity(db);
+  let sqliteVersion = '3.x';
+  try {
+    const row = db.prepare('SELECT sqlite_version() AS version').get() as
+      | { version?: string }
+      | undefined;
+    if (row?.version) {
+      sqliteVersion = row.version;
+    }
+  } catch {
+    // Non-fatal fallback
+  }
 
   return {
     db,
     dbPath,
     backupPath,
+    sqliteVersion,
+    integrity,
     close(): void {
       if (db.open) {
+        if (dbPath !== ':memory:' && !db.readonly) {
+          try {
+            db.pragma('wal_checkpoint(PASSIVE)');
+          } catch {
+            // Best-effort WAL flush during shutdown
+          }
+        }
         db.close();
       }
     },

@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { ChevronLeft, ChevronRight, Play, Shuffle } from 'lucide-react';
-import { PROTOTYPE_ALBUMS, type PrototypeAlbum } from '../data/prototype-catalog';
+import type { PrototypeAlbum } from '../data/prototype-catalog';
 import { uiStore, useUiState } from '../stores/ui-store';
 import { getNonRepeatingEditorialSlots } from '../utils/vietnamese-search';
 
@@ -8,12 +8,7 @@ interface AlbumCoverflowProps {
   albums?: PrototypeAlbum[];
 }
 
-/**
- * M5.4 Square 1:1 3D Album Coverflow
- * Strictly uses 1:1 square album sleeves with 3D perspective, depth & soft shadow
- * so Albums Selection stays visually distinct from Portrait Playlist Editorial Gallery.
- */
-export function AlbumCoverflow({ albums = PROTOTYPE_ALBUMS }: AlbumCoverflowProps) {
+export function AlbumCoverflow({ albums = [] }: AlbumCoverflowProps) {
   const ui = useUiState();
   const userAccent = uiStore.getUserAccentPalette();
   const safeIndex = albums.length > 0 ? ui.selectedAlbumCoverflowIndex % albums.length : 0;

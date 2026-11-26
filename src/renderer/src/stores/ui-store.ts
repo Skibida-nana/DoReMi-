@@ -65,10 +65,7 @@ import {
 } from '../../../shared/utils/statistics-engine';
 import { DEFAULT_DOREMI_ARTWORK_URL } from '../assets/default-artwork';
 import {
-  INITIAL_PROTOTYPE_PLAYLISTS,
-  PROTOTYPE_ALBUMS,
-  PROTOTYPE_TRACKS,
-  getAlbumById,
+  DEFAULT_CATALOG_PALETTE,
   type AlbumColorPalette,
   type PrototypeAlbum,
   type PrototypePlaylist,
@@ -76,13 +73,40 @@ import {
 } from '../data/prototype-catalog';
 import { formatTrackAudioSpecs } from '../utils/formatters';
 import {
+  isConfirmedDemoAlbumId,
+  isConfirmedDemoPlaylistId,
+  isConfirmedDemoTrackId,
+} from '../../../shared/utils/demo-cleanup';
+import type { PlaylistRecord } from '../../../shared/types/playlist';
+import {
+  THEME_ACCENT_PRESETS,
   accentToAlbumPalette,
   normalizeHexColor,
   resolveUserAccentPalette,
   type ResolvedAccentPalette,
 } from '../utils/theme-presets';
+import type {
+  PlaybackContextDescriptor,
+  PlaybackControlState,
+  PlaybackQueueEntry,
+  RepeatMode,
+} from '../../../shared/types/player';
+import {
+  DEFAULT_PLAYBACK_CONTROLS,
+  normalizePlaybackControls,
+} from '../../../shared/utils/playback-controls';
+import { resolveNextNowPlayingModePatch } from '../utils/animation-policy';
+import {
+  readSessionPresentation,
+  writeSessionPresentation,
+} from '../utils/presentation-lifecycle';
 import { libraryStore } from './library-store';
-import { playerActions, setLocalSessionCheckpointListener } from './player-store';
+import {
+  playbackQueueController,
+  playerActions,
+  setExternalQueueEntryListener,
+  setLocalSessionCheckpointListener,
+} from './player-store';
 
 const CUSTOM_LYRICS_V2_KEY = 'doremi_custom_lyrics_v2';
 const LEGACY_CUSTOM_LYRICS_KEY = 'lossless_player_custom_lyrics_v1';
@@ -91,7 +115,55 @@ const METADATA_OVERRIDES_KEY = 'doremi_metadata_overrides_v1';
 const PROFILE_STORAGE_KEY = 'doremi_local_profile_v1';
 const PREFERENCES_STORAGE_KEY = 'doremi_personalization_prefs_v1';
 const PLAYLISTS_STORAGE_KEY = 'doremi_local_playlists_v1';
+const PLAYLISTS_DEMO_PURGED_KEY = 'doremi_demo_purged_v1';
 const LISTENING_SESSIONS_KEY = 'doremi_listening_sessions_v1';
+
+function computePaletteFromSeed(seed: string): AlbumColorPalette {
+  if (!seed) {
+    return DEFAULT_CATALOG_PALETTE;
+  }
+  const idx = hashStringToIndex(seed, THEME_ACCENT_PRESETS.length);
+  const preset = THEME_ACCENT_PRESETS[idx] ?? THEME_ACCENT_PRESETS[0];
+  return {
+    dominant: preset.hex,
+    secondary: preset.secondaryHex,
+    glowRgb: preset.glowRgb,
+    secondaryGlowRgb: preset.secondaryGlowRgb,
+    badgeBg: `rgba(${preset.glowRgb}, 0.18)`,
+    borderGlow: `rgba(${preset.glowRgb}, 0.42)`,
+  };
+}
+
+function buildAlbumIdSlug(albumTitle: string, albumArtist: string): string {
+  const input = `${albumTitle.normalize('NFC').toLowerCase()}::${albumArtist.normalize('NFC').toLowerCase()}`;
+  let h = 2166136261;
+  for (let i = 0; i < input.length; i += 1) {
+    h ^= input.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return `alb-local-${(h >>> 0).toString(16)}`;
+}
+
+function mapPlaylistRecordToUi(record: PlaylistRecord): PrototypePlaylist {
+  const mins = Math.round(record.totalDurationMs / 60000);
+  const durationNote = mins > 0 ? ` · ${mins} phút` : '';
+  return {
+    id: record.id,
+    name: record.name,
+    description: record.description,
+    trackIds: [...record.trackIds],
+    entries: record.entries,
+    updatedLabel: `${record.trackCount} bài hát${durationNote}`,
+    coverUrl: record.artworkUrl,
+    hasCustomArtwork: record.hasCustomArtwork,
+    trackCount: record.trackCount,
+    totalDurationMs: record.totalDurationMs,
+    availableCount: record.availableCount,
+    missingCount: record.missingCount,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+  };
+}
 
 export const DEFAULT_DISPLAY_NAME = 'Người nghe nhạc';
 export const MAX_DISPLAY_NAME_LENGTH = 48;
@@ -197,6 +269,7 @@ const DEFAULT_PREFERENCES: PersonalizationPreferences = {
   },
   replayGain: { ...DEFAULT_REPLAYGAIN_SETTINGS },
   audioLab: createDefaultAudioLabSettings(),
+  playbackControls: { ...DEFAULT_PLAYBACK_CONTROLS },
   editorialTypography: { ...DEFAULT_EDITORIAL_TYPOGRAPHY },
   editorialFonts: [],
 };
@@ -245,6 +318,7 @@ function loadInitialPreferences(): PersonalizationPreferences {
     },
     replayGain: normalizeReplayGainSettings(stored.replayGain),
     audioLab: normalizeAudioLabSettings(stored.audioLab),
+    playbackControls: normalizePlaybackControls(stored.playbackControls),
     editorialTypography: normalizeEditorialTypographySettings(
       stored.editorialTypography,
       validFontIds,
@@ -254,18 +328,46 @@ function loadInitialPreferences(): PersonalizationPreferences {
 }
 
 function loadInitialPlaylists(): PrototypePlaylist[] {
-  if (typeof window !== 'undefined' && window.localStorage.getItem(PLAYLISTS_STORAGE_KEY) !== null) {
-    const stored = safeReadJson<PrototypePlaylist[]>(PLAYLISTS_STORAGE_KEY, []);
-    if (Array.isArray(stored)) {
-      return stored;
-    }
+  if (typeof window === 'undefined') {
+    return [];
   }
-  return INITIAL_PROTOTYPE_PLAYLISTS;
+  const raw = window.localStorage.getItem(PLAYLISTS_STORAGE_KEY);
+  if (raw === null) {
+    window.localStorage.setItem(PLAYLISTS_DEMO_PURGED_KEY, '1');
+    return [];
+  }
+  const stored = safeReadJson<PrototypePlaylist[]>(PLAYLISTS_STORAGE_KEY, []);
+  if (!Array.isArray(stored)) {
+    return [];
+  }
+  // Safe idempotent cleanup of confirmed prototype playlists & track IDs
+  const alreadyPurged = window.localStorage.getItem(PLAYLISTS_DEMO_PURGED_KEY) === '1';
+  const cleaned = stored
+    .filter((pl) => pl && typeof pl.name === 'string' && !isConfirmedDemoPlaylistId(pl.id))
+    .map((pl) => {
+      const nextTrackIds = Array.isArray(pl.trackIds)
+        ? pl.trackIds.filter((id) => !isConfirmedDemoTrackId(id))
+        : [];
+      return {
+        ...pl,
+        trackIds: nextTrackIds,
+        updatedLabel: `${nextTrackIds.length} bài hát`,
+      };
+    });
+
+  if (!alreadyPurged) {
+    safeWriteJson(PLAYLISTS_STORAGE_KEY, cleaned);
+    window.localStorage.setItem(PLAYLISTS_DEMO_PURGED_KEY, '1');
+  }
+  return cleaned;
 }
 
 function loadInitialSessions(): StoredListeningSession[] {
   const stored = safeReadJson<StoredListeningSession[]>(LISTENING_SESSIONS_KEY, []);
-  return Array.isArray(stored) ? stored : [];
+  if (!Array.isArray(stored)) {
+    return [];
+  }
+  return stored.filter((s) => s && !isConfirmedDemoTrackId(s.trackId));
 }
 
 function hashStringToIndex(input: string, modulo: number): number {
@@ -289,7 +391,7 @@ export type AppRoute =
   | 'settings'
   | 'profile';
 
-export type RepeatMode = 'off' | 'all' | 'one';
+export type { RepeatMode };
 
 export type NowPlayingRightTab = 'lyrics' | 'queue' | 'info';
 
@@ -320,7 +422,7 @@ export interface UiStoreState {
   selectedAlbumId: string;
   selectedPlaylistId: string | null;
   selectedArtistName: string;
-  libraryTab: 'songs' | 'albums' | 'artists' | 'playlists' | 'favorites';
+  libraryTab: 'songs' | 'albums' | 'artists' | 'folders' | 'playlists' | 'favorites';
   searchQuery: string;
   isQueueOpen: boolean;
 
@@ -337,12 +439,16 @@ export interface UiStoreState {
   sampleMuted: boolean;
   shuffle: boolean;
   repeat: RepeatMode;
+  autoNext: boolean;
   queueTrackIds: string[];
 
   // Now Playing & Vinyl Swap
   showLyricsPanel: boolean;
   nowPlayingRightTab: NowPlayingRightTab;
   nowPlayingMode: NowPlayingDisplayMode;
+  nowPlayingSidebarRevealed: boolean;
+  /** Phase 4.3B: In-session Focus Lyrics Browse preservation across blur/background/remount */
+  focusLyricsBrowse: { trackId: string; viewedIndex: number } | null;
   vinylSwapPhase: VinylSwapPhase;
   vinylDisplayTrackId: string;
 
@@ -365,39 +471,41 @@ export interface UiStoreState {
   appearance: AppearanceSettings;
 }
 
-interface ActiveSampleSession {
-  sessionId: string;
-  track: PrototypeTrack;
-  startedAtMs: number;
-  accumulatedMs: number;
-  activeSegmentStartMs: number | null;
-  intervals: Array<{ startMs: number; endMs: number }>;
-  lastFlushedMs: number;
-}
-
 class UiStore {
   private state: UiStoreState;
   private readonly listeners = new Set<() => void>();
-  private playbackTimer: ReturnType<typeof setInterval> | null = null;
-  private swapTimers: Array<ReturnType<typeof setTimeout>> = [];
+  private cachedTracksSourceRef: TrackRecord[] | null = null;
+  private cachedUnifiedTracks: PrototypeTrack[] = [];
+  private cachedUnifiedTrackMap: Map<string, PrototypeTrack> = new Map();
+  private cachedDerivedAlbums: PrototypeAlbum[] = [];
+  private cachedDerivedAlbumMap: Map<string, PrototypeAlbum> = new Map();
+  private cachedAlbumTrackCounts: Map<string, number> = new Map();
+  private cachedFavoriteIdsRef: string[] | null = null;
+  private cachedFavoriteIdSet: Set<string> = new Set();
   private toastTimer: ReturnType<typeof setTimeout> | null = null;
   private audioLabIpcTimer: ReturnType<typeof setTimeout> | null = null;
-  private sampleSession: ActiveSampleSession | null = null;
   private hydratedFromElectron = false;
 
   constructor() {
     const initialPrefs = loadInitialPreferences();
     const initialProfile = loadInitialProfile();
     const initialPlaylists = loadInitialPlaylists();
+    const initialControls = normalizePlaybackControls(
+      initialPrefs.playbackControls,
+      DEFAULT_PLAYBACK_CONTROLS,
+    );
+    const sessionPresentation = readSessionPresentation();
+    const initialMode: NowPlayingDisplayMode = sessionPresentation?.nowPlayingMode ?? 'standard';
+    const initialRightTab: NowPlayingRightTab = sessionPresentation?.nowPlayingRightTab ?? 'lyrics';
 
     this.state = {
-      route: 'home',
-      previousRoute: 'home',
+      route: sessionPresentation?.route ?? 'home',
+      previousRoute: sessionPresentation?.previousRoute ?? 'home',
       selectedGalleryIndex: 0,
       selectedAlbumCoverflowIndex: 0,
-      selectedAlbumId: PROTOTYPE_ALBUMS[0].id,
-      selectedPlaylistId: initialPlaylists[0]?.id ?? null,
-      selectedArtistName: PROTOTYPE_ALBUMS[2].artist,
+      selectedAlbumId: '',
+      selectedPlaylistId: null,
+      selectedArtistName: '',
       libraryTab: 'songs',
       searchQuery: '',
       isQueueOpen: false,
@@ -405,21 +513,24 @@ class UiStore {
       profile: initialProfile,
       preferences: initialPrefs,
 
-      activeSource: 'sample',
-      activeSampleTrackId: PROTOTYPE_TRACKS[0].id,
+      activeSource: 'local',
+      activeSampleTrackId: '',
       sampleIsPlaying: false,
-      sampleCurrentTimeSec: 18,
+      sampleCurrentTimeSec: 0,
       sampleVolume: 0.82,
       sampleMuted: false,
-      shuffle: false,
-      repeat: 'all',
-      queueTrackIds: PROTOTYPE_TRACKS.filter((t) => t.status === 'available').map((t) => t.id),
+      shuffle: initialControls.shuffleEnabled,
+      repeat: initialControls.repeatMode,
+      autoNext: initialControls.autoNextEnabled,
+      queueTrackIds: [],
 
-      showLyricsPanel: true,
-      nowPlayingRightTab: 'lyrics',
-      nowPlayingMode: 'standard',
+      showLyricsPanel: initialRightTab === 'lyrics',
+      nowPlayingRightTab: initialRightTab,
+      nowPlayingMode: initialMode,
+      nowPlayingSidebarRevealed: initialMode !== 'focus',
+      focusLyricsBrowse: sessionPresentation?.focusLyricsBrowse ?? null,
       vinylSwapPhase: 'idle',
-      vinylDisplayTrackId: PROTOTYPE_TRACKS[0].id,
+      vinylDisplayTrackId: '',
       customLyricsByTrackId: loadStoredCustomLyrics(),
       customCoversByTrackId: safeReadJson<Record<string, string>>(CUSTOM_COVERS_KEY, {}),
       metadataOverridesByTrackId: safeReadJson<Record<string, TrackMetadataOverrideInput>>(
@@ -427,23 +538,9 @@ class UiStore {
         {},
       ),
 
-      favoriteIds: [
-        'trk-afterlight-1',
-        'trk-midnight-1',
-        'trk-golden-1',
-        'trk-velvet-1',
-        'alb-afterlight',
-        'alb-golden-bloom',
-      ],
-      playlists: initialPlaylists,
-      recentlyPlayedIds: [
-        'trk-afterlight-1',
-        'trk-midnight-1',
-        'trk-golden-1',
-        'trk-velvet-1',
-        'trk-blue-1',
-        'trk-quiet-1',
-      ],
+      favoriteIds: [],
+      playlists: typeof window !== 'undefined' && window.losslessApi ? [] : initialPlaylists,
+      recentlyPlayedIds: [],
       toastMessage: null,
 
       listeningSessions: loadInitialSessions(),
@@ -457,7 +554,7 @@ class UiStore {
       },
     };
 
-    // Sync initial Fade In/Out, Audio Lab DSP, and ReplayGain configs into singleton AudioEngine immediately
+    // Sync initial Fade In/Out, Audio Lab DSP, ReplayGain, and Playback Controls into AudioEngine + Single Queue Controller
     playerActions.setTransitionConfig(initialPrefs.transition);
     playerActions.setAudioLabSettings(
       normalizeAudioLabSettings(initialPrefs.audioLab),
@@ -465,6 +562,61 @@ class UiStore {
     playerActions.setReplayGainSettings(
       normalizeReplayGainSettings(initialPrefs.replayGain),
     );
+    playbackQueueController.setTrackPlayableChecker((trackId) => this.isTrackIdPlayable(trackId));
+    playerActions.setPlaybackControls(initialControls);
+
+    playbackQueueController.subscribe((qState) => {
+      const nextIds: string[] = [];
+      if (qState.currentEntry) {
+        nextIds.push(qState.currentEntry.trackId);
+      }
+      for (const item of qState.upcoming) {
+        nextIds.push(item.trackId);
+      }
+      if (
+        qState.controls.shuffleEnabled !== this.state.shuffle ||
+        qState.controls.repeatMode !== this.state.repeat ||
+        qState.controls.autoNextEnabled !== this.state.autoNext ||
+        nextIds.length !== this.state.queueTrackIds.length ||
+        nextIds.some((id, idx) => id !== this.state.queueTrackIds[idx])
+      ) {
+        this.setState({
+          shuffle: qState.controls.shuffleEnabled,
+          repeat: qState.controls.repeatMode,
+          autoNext: qState.controls.autoNextEnabled,
+          queueTrackIds: nextIds,
+        });
+      }
+    });
+
+    // External queue entry callback (no prototype fallback in Phase 3)
+    setExternalQueueEntryListener((_entry) => {
+      // Reserved for future local sources; nothing to synthesize in pure offline mode.
+    });
+
+    // Keep Favorites / Playlists synchronized ONLY when Library tracks array actually changes
+    // (avoid firing redundant IPC snapshot calls on every scanProgress tick)
+    let lastTracksRef = libraryStore.getSnapshot().tracks;
+    libraryStore.subscribe(() => {
+      const snap = libraryStore.getSnapshot();
+      if (snap.tracks === lastTracksRef) {
+        return;
+      }
+      lastTracksRef = snap.tracks;
+      if (this.state.playlists.length > 0 || this.state.favoriteIds.length > 0 || snap.tracks.length > 0) {
+        if (typeof window !== 'undefined' && window.losslessApi?.getPlaylistSnapshot) {
+          void this.refreshPlaylistsAndFavorites();
+        } else {
+          const validIds = new Set(snap.tracks.map((t) => t.id));
+          const filteredFavs = this.state.favoriteIds.filter((id) => validIds.has(id));
+          if (filteredFavs.length !== this.state.favoriteIds.length) {
+            this.setState({ favoriteIds: filteredFavs });
+            return;
+          }
+        }
+      }
+      this.emit();
+    });
 
     // Mirror Electron local audio session checkpoints so Statistics view stays reactive
     setLocalSessionCheckpointListener((session) => {
@@ -488,7 +640,23 @@ class UiStore {
   }
 
   private setState(partial: Partial<UiStoreState>): void {
-    this.state = { ...this.state, ...partial };
+    const prev = this.state;
+    this.state = { ...prev, ...partial };
+    if (
+      partial.route !== undefined ||
+      partial.previousRoute !== undefined ||
+      partial.nowPlayingMode !== undefined ||
+      partial.nowPlayingRightTab !== undefined ||
+      partial.focusLyricsBrowse !== undefined
+    ) {
+      writeSessionPresentation({
+        route: this.state.route,
+        previousRoute: this.state.previousRoute,
+        nowPlayingMode: this.state.nowPlayingMode,
+        nowPlayingRightTab: this.state.nowPlayingRightTab,
+        focusLyricsBrowse: this.state.focusLyricsBrowse,
+      });
+    }
     this.emit();
   }
 
@@ -501,22 +669,54 @@ class UiStore {
     }
     this.hydratedFromElectron = true;
     try {
-      const [profile, preferences] = await Promise.all([
+      const legacyPlaylists = loadInitialPlaylists();
+      const rawFavs = this.state.favoriteIds.filter(
+        (id) => !isConfirmedDemoTrackId(id) && !isConfirmedDemoAlbumId(id),
+      );
+      if (window.losslessApi.migrateLegacyCollectionsToSqlite) {
+        await window.losslessApi.migrateLegacyCollectionsToSqlite({
+          playlists: legacyPlaylists.map((p) => ({
+            id: p.id,
+            name: p.name,
+            description: p.description,
+            trackIds: p.trackIds,
+          })),
+          favoriteIds: rawFavs,
+        });
+      }
+
+      const [profile, preferences, playlistSnap] = await Promise.all([
         window.losslessApi.getProfile(),
         window.losslessApi.getPreferences(),
+        window.losslessApi.getPlaylistSnapshot
+          ? window.losslessApi.getPlaylistSnapshot()
+          : Promise.resolve(null),
       ]);
       const normalizedPreferences: PersonalizationPreferences = {
         ...preferences,
         replayGain: normalizeReplayGainSettings(preferences.replayGain),
         audioLab: normalizeAudioLabSettings(preferences.audioLab),
+        playbackControls: normalizePlaybackControls(preferences.playbackControls),
       };
       playerActions.setTransitionConfig(normalizedPreferences.transition);
       playerActions.setAudioLabSettings(normalizedPreferences.audioLab!);
       playerActions.setReplayGainSettings(normalizedPreferences.replayGain!);
+      playerActions.setPlaybackControls(normalizedPreferences.playbackControls!);
       safeWriteJson(PREFERENCES_STORAGE_KEY, normalizedPreferences);
+
+      const nextPlaylists = playlistSnap
+        ? playlistSnap.playlists.map(mapPlaylistRecordToUi)
+        : this.state.playlists;
+      const nextFavs = playlistSnap ? playlistSnap.favoriteTrackIds : this.state.favoriteIds;
+
       this.setState({
         profile,
         preferences: normalizedPreferences,
+        playlists: nextPlaylists,
+        favoriteIds: nextFavs,
+        shuffle: normalizedPreferences.playbackControls!.shuffleEnabled,
+        repeat: normalizedPreferences.playbackControls!.repeatMode,
+        autoNext: normalizedPreferences.playbackControls!.autoNextEnabled,
         appearance: {
           dynamicAlbumColors: normalizedPreferences.dynamicAlbumColors,
           vinylAnimation: normalizedPreferences.vinylAnimation,
@@ -526,6 +726,28 @@ class UiStore {
       });
     } catch {
       // Fallback safely to persisted localStorage values
+    }
+  }
+
+  async refreshPlaylistsAndFavorites(): Promise<void> {
+    if (typeof window === 'undefined' || !window.losslessApi?.getPlaylistSnapshot) {
+      return;
+    }
+    try {
+      const snap = await window.losslessApi.getPlaylistSnapshot();
+      const mapped = snap.playlists.map(mapPlaylistRecordToUi);
+      const maxIdx = Math.max(0, mapped.length - 1);
+      const selectedStillExists =
+        this.state.selectedPlaylistId !== null &&
+        mapped.some((p) => p.id === this.state.selectedPlaylistId);
+      this.setState({
+        playlists: mapped,
+        favoriteIds: snap.favoriteTrackIds,
+        selectedGalleryIndex: Math.min(this.state.selectedGalleryIndex, maxIdx),
+        selectedPlaylistId: selectedStillExists ? this.state.selectedPlaylistId : null,
+      });
+    } catch {
+      // Ignore transient IPC refresh error
     }
   }
 
@@ -570,7 +792,8 @@ class UiStore {
   }
 
   openAlbumDetail(albumId: string): void {
-    const albumIndex = PROTOTYPE_ALBUMS.findIndex((a) => a.id === albumId);
+    const albums = this.getDerivedAlbums();
+    const albumIndex = albums.findIndex((a) => a.id === albumId);
     this.setState({
       route: 'album-detail',
       previousRoute:
@@ -613,12 +836,13 @@ class UiStore {
       isQueueOpen: false,
       showLyricsPanel: targetTab === 'lyrics',
       nowPlayingRightTab: targetTab,
+      nowPlayingSidebarRevealed: this.state.nowPlayingMode !== 'focus',
     });
   }
 
   closeNowPlaying(): void {
     const target = this.state.previousRoute === 'now-playing' ? 'home' : this.state.previousRoute;
-    this.setState({ route: target, nowPlayingMode: 'standard' });
+    this.setState({ route: target, nowPlayingMode: 'standard', nowPlayingSidebarRevealed: true });
   }
 
   setNowPlayingRightTab(tab: NowPlayingRightTab): void {
@@ -628,11 +852,37 @@ class UiStore {
     });
   }
 
-  setNowPlayingMode(mode: NowPlayingDisplayMode): void {
-    if (mode === this.state.nowPlayingMode) {
+  setNowPlayingSidebarRevealed(revealed: boolean): void {
+    if (this.state.nowPlayingSidebarRevealed === revealed) {
       return;
     }
-    this.setState({ nowPlayingMode: mode });
+    this.setState({ nowPlayingSidebarRevealed: revealed });
+  }
+
+  setNowPlayingMode(mode: NowPlayingDisplayMode): void {
+    const patch = resolveNextNowPlayingModePatch(
+      this.state.route,
+      this.state.nowPlayingMode,
+      mode,
+    );
+    if (!patch) {
+      return;
+    }
+    this.setState(patch);
+  }
+
+  setFocusLyricsBrowseState(next: { trackId: string; viewedIndex: number } | null): void {
+    const curr = this.state.focusLyricsBrowse;
+    if (
+      (curr === null && next === null) ||
+      (curr !== null &&
+        next !== null &&
+        curr.trackId === next.trackId &&
+        curr.viewedIndex === next.viewedIndex)
+    ) {
+      return;
+    }
+    this.setState({ focusLyricsBrowse: next });
   }
 
   toggleNowPlayingFocusMode(): void {
@@ -661,14 +911,15 @@ class UiStore {
   }
 
   selectAlbumCoverflowIndex(index: number): void {
-    const total = PROTOTYPE_ALBUMS.length;
+    const albums = this.getDerivedAlbums();
+    const total = albums.length;
     if (total === 0) {
       return;
     }
     const normalized = ((index % total) + total) % total;
     this.setState({
       selectedAlbumCoverflowIndex: normalized,
-      selectedAlbumId: PROTOTYPE_ALBUMS[normalized].id,
+      selectedAlbumId: albums[normalized].id,
     });
   }
 
@@ -793,6 +1044,14 @@ class UiStore {
       audioLab: normalizeAudioLabSettings(
         partial.audioLab !== undefined ? partial.audioLab : current.audioLab,
       ),
+      playbackControls: normalizePlaybackControls(
+        partial.playbackControls
+          ? {
+              ...(current.playbackControls ?? DEFAULT_PLAYBACK_CONTROLS),
+              ...partial.playbackControls,
+            }
+          : current.playbackControls,
+      ),
       editorialTypography: normalizeEditorialTypographySettings(
         {
           ...current.editorialTypography,
@@ -835,6 +1094,8 @@ class UiStore {
             ...persisted,
             replayGain: normalizeReplayGainSettings(persisted.replayGain),
             audioLab: normalizeAudioLabSettings(persisted.audioLab),
+            // Keep latest synchronous queue controls so rapid clicks never revert from stale IPC
+            playbackControls: this.state.preferences.playbackControls,
           };
           playerActions.setTransitionConfig(normalizedPersisted.transition);
           playerActions.setAudioLabSettings(normalizedPersisted.audioLab!);
@@ -1514,27 +1775,6 @@ class UiStore {
       };
     }
 
-    const sample = PROTOTYPE_TRACKS.find((t) => t.id === trackId);
-    if (sample?.lyrics && sample.lyrics.length > 0) {
-      const rawContent = sample.lyrics
-        .map((line) => {
-          const mins = String(Math.floor(line.timeSec / 60)).padStart(2, '0');
-          const secs = (line.timeSec % 60).toFixed(2).padStart(5, '0');
-          return `[${mins}:${secs}] ${line.text}`;
-        })
-        .join('\n');
-      return {
-        trackId,
-        source: 'embedded',
-        format: 'lrc',
-        rawContent,
-        timedLines: sample.lyrics.map((l) => ({ timeSec: l.timeSec, text: l.text })),
-        plainLines: sample.lyrics.map((l) => l.text),
-        hasCustomLyrics: false,
-        sidecarPath: null,
-      };
-    }
-
     return {
       trackId,
       source: 'none',
@@ -1548,7 +1788,6 @@ class UiStore {
   }
 
   setWebMetadataOverride(trackId: string, input: TrackMetadataOverrideInput): void {
-    const sample = PROTOTYPE_TRACKS.find((t) => t.id === trackId);
     const clean = (v: string | null | undefined): string | null => {
       if (typeof v !== 'string') return null;
       const t = v.normalize('NFC').trim();
@@ -1560,9 +1799,9 @@ class UiStore {
     const albumOverride = clean(input.albumOverride);
 
     const normalized: TrackMetadataOverrideInput = {
-      titleOverride: sample && titleOverride === sample.title ? null : titleOverride,
-      artistOverride: sample && artistOverride === sample.artist ? null : artistOverride,
-      albumOverride: sample && albumOverride === sample.albumTitle ? null : albumOverride,
+      titleOverride,
+      artistOverride,
+      albumOverride,
     };
 
     const next = { ...this.state.metadataOverridesByTrackId };
@@ -1611,13 +1850,9 @@ class UiStore {
         this.state.preferences.themeMode,
       );
     }
-    const sample = PROTOTYPE_TRACKS.find((t) => t.id === trackId);
-    if (sample) {
-      return getAlbumById(sample.albumId).palette;
-    }
-    const seed = localSeed || trackId;
-    const idx = hashStringToIndex(seed, PROTOTYPE_ALBUMS.length);
-    return PROTOTYPE_ALBUMS[idx].palette;
+    const local = libraryStore.getTrackById(trackId);
+    const seed = local?.album || local?.title || localSeed || trackId;
+    return computePaletteFromSeed(seed);
   }
 
   getPaletteForPlaylist(playlist: PrototypePlaylist | null | undefined): AlbumColorPalette {
@@ -1631,11 +1866,13 @@ class UiStore {
     if (firstTrackId) {
       return this.getPaletteForTrack(firstTrackId, playlist.name);
     }
-    const idx = hashStringToIndex(playlist.id || playlist.name, PROTOTYPE_ALBUMS.length);
-    return PROTOTYPE_ALBUMS[idx].palette;
+    return computePaletteFromSeed(playlist.id || playlist.name);
   }
 
   getCoverForTrack(trackId: string, size: 'full' | 'thumb' = 'full'): string {
+    if (!trackId) {
+      return DEFAULT_DOREMI_ARTWORK_URL;
+    }
     const lib = libraryStore.getSnapshot();
     const localTrack = lib.tracks.find((t) => t.id === trackId);
     if (localTrack) {
@@ -1651,21 +1888,9 @@ class UiStore {
       return customWebCover;
     }
 
-    const sample = PROTOTYPE_TRACKS.find((t) => t.id === trackId);
-    if (sample) {
-      return sample.coverUrl || DEFAULT_DOREMI_ARTWORK_URL;
-    }
-
     return DEFAULT_DOREMI_ARTWORK_URL;
   }
 
-  /**
-   * Resolves playlist artwork strictly following M5.3 priority:
-   * 1) Custom playlist cover
-   * 2) First track cover
-   * 3) Up to 4 distinct covers for 2x2 collage
-   * 4) Default artwork fallback
-   */
   getPlaylistCovers(playlist: PrototypePlaylist): {
     primaryCover: string | null;
     collageCovers: string[];
@@ -1693,27 +1918,50 @@ class UiStore {
   }
 
   // ---------------------------------------------------------------------------
-  // Favorites & Playlists Management (Persisted)
+  // Favorites & Playlists Management (SQLite in Electron, clean localStorage fallback)
   // ---------------------------------------------------------------------------
 
-  private savePlaylists(playlists: PrototypePlaylist[], selectedGalleryIndex?: number): void {
+  private savePlaylists(
+    playlists: PrototypePlaylist[],
+    selectedGalleryIndex?: number,
+    preserveMissingSelection = false,
+  ): void {
     safeWriteJson(PLAYLISTS_STORAGE_KEY, playlists);
     const maxIdx = Math.max(0, playlists.length - 1);
     const nextIdx =
       typeof selectedGalleryIndex === 'number'
         ? Math.min(Math.max(0, selectedGalleryIndex), maxIdx)
         : Math.min(this.state.selectedGalleryIndex, maxIdx);
+    const selectionStillExists =
+      this.state.selectedPlaylistId !== null &&
+      playlists.some((p) => p.id === this.state.selectedPlaylistId);
     this.setState({
       playlists,
       selectedGalleryIndex: nextIdx,
-      selectedPlaylistId:
-        playlists.some((p) => p.id === this.state.selectedPlaylistId)
+      selectedPlaylistId: preserveMissingSelection
+        ? this.state.selectedPlaylistId
+        : selectionStillExists
           ? this.state.selectedPlaylistId
-          : playlists[nextIdx]?.id ?? null,
+          : null,
     });
   }
 
-  toggleFavorite(id: string): void {
+  async toggleFavorite(id: string): Promise<void> {
+    if (!id) {
+      return;
+    }
+    if (typeof window !== 'undefined' && window.losslessApi?.toggleFavoriteTrack) {
+      try {
+        const res = await window.losslessApi.toggleFavoriteTrack(id);
+        this.setState({ favoriteIds: res.favoriteTrackIds });
+        return;
+      } catch (err) {
+        this.showToast(
+          err instanceof Error ? err.message : 'Không thể cập nhật trạng thái yêu thích.',
+        );
+        return;
+      }
+    }
     const exists = this.state.favoriteIds.includes(id);
     const favoriteIds = exists
       ? this.state.favoriteIds.filter((item) => item !== id)
@@ -1721,47 +1969,135 @@ class UiStore {
     this.setState({ favoriteIds });
   }
 
-  createPlaylist(name: string, description: string, initialTrackIds?: string[]): PrototypePlaylist | null {
+  async setFavoriteMany(trackIds: readonly string[], favorite: boolean): Promise<void> {
+    if (trackIds.length === 0) return;
+    if (typeof window !== 'undefined' && window.losslessApi?.setFavoriteTracks) {
+      const res = await window.losslessApi.setFavoriteTracks(trackIds, favorite);
+      this.setState({ favoriteIds: res.favoriteTrackIds });
+      return;
+    }
+    const set = new Set(this.state.favoriteIds);
+    for (const id of trackIds) {
+      if (favorite) set.add(id);
+      else set.delete(id);
+    }
+    this.setState({ favoriteIds: Array.from(set) });
+  }
+
+  /**
+   * Creates a new playlist. When `initialTrackIds` is omitted or empty,
+   * the playlist is strictly created empty (0 tracks) — NEVER injects sample/active track.
+   */
+  async createPlaylist(
+    name: string,
+    description: string,
+    initialTrackIds: readonly string[] = [],
+  ): Promise<PrototypePlaylist | null> {
     const trimmed = name.normalize('NFC').trim();
     if (!trimmed) {
       return null;
     }
-    const trackIds =
-      initialTrackIds !== undefined
-        ? initialTrackIds
-        : this.state.activeSampleTrackId
-          ? [this.state.activeSampleTrackId]
-          : [];
+    const cleanTrackIds = initialTrackIds.filter((id) => typeof id === 'string' && id.length > 0);
+
+    if (typeof window !== 'undefined' && window.losslessApi?.createPlaylist) {
+      const record = await window.losslessApi.createPlaylist({
+        name: trimmed,
+        description: description.trim(),
+        initialTrackIds: cleanTrackIds,
+      });
+      const uiPlaylist = mapPlaylistRecordToUi(record);
+      this.savePlaylists([uiPlaylist, ...this.state.playlists], 0);
+      this.showToast(`Đã tạo playlist "${trimmed}"`);
+      return uiPlaylist;
+    }
+
     const next: PrototypePlaylist = {
       id: `pl-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       name: trimmed,
-      description: description.trim() || 'Playlist cục bộ tùy chỉnh.',
-      trackIds,
-      updatedLabel: `${trackIds.length} bài hát`,
+      description: description.trim(),
+      trackIds: [...cleanTrackIds],
+      entries: cleanTrackIds.map((trackId, position) => ({
+        entryId: `pe-${Date.now()}-${position}`,
+        trackId,
+        position,
+        addedAt: new Date().toISOString(),
+      })),
+      updatedLabel: `${cleanTrackIds.length} bài hát`,
       coverUrl: null,
+      trackCount: cleanTrackIds.length,
     };
     this.savePlaylists([next, ...this.state.playlists], 0);
     this.showToast(`Đã tạo playlist "${trimmed}"`);
     return next;
   }
 
-  renamePlaylist(playlistId: string, name: string, description?: string): void {
+  async renamePlaylist(playlistId: string, name: string, description?: string): Promise<void> {
     const trimmed = name.normalize('NFC').trim();
     if (!trimmed) {
       return;
     }
+    if (typeof window !== 'undefined' && window.losslessApi?.updatePlaylist) {
+      const updated = await window.losslessApi.updatePlaylist(playlistId, {
+        name: trimmed,
+        description: typeof description === 'string' ? description : undefined,
+      });
+      const mapped = mapPlaylistRecordToUi(updated);
+      this.savePlaylists(
+        this.state.playlists.map((pl) => (pl.id === playlistId ? mapped : pl)),
+      );
+      this.showToast(`Đã cập nhật playlist "${trimmed}"`);
+      return;
+    }
+
     const updated = this.state.playlists.map((pl) =>
       pl.id === playlistId
         ? {
             ...pl,
             name: trimmed,
             description:
-              typeof description === 'string' ? description.trim() || pl.description : pl.description,
+              typeof description === 'string' ? description.trim() : pl.description,
           }
         : pl,
     );
     this.savePlaylists(updated);
     this.showToast(`Đã cập nhật playlist "${trimmed}"`);
+  }
+
+  async importPlaylistCustomCover(playlistId: string): Promise<void> {
+    if (typeof window !== 'undefined' && window.losslessApi?.importPlaylistArtwork) {
+      const res = await window.losslessApi.importPlaylistArtwork(playlistId);
+      if (res.canceled) return;
+      if (res.error) {
+        this.showToast(res.error);
+        return;
+      }
+      if (res.playlist) {
+        const mapped = mapPlaylistRecordToUi(res.playlist);
+        this.savePlaylists(
+          this.state.playlists.map((pl) => (pl.id === playlistId ? mapped : pl)),
+        );
+        this.showToast('Đã cập nhật ảnh bìa playlist');
+      }
+    }
+  }
+
+  async removePlaylistCustomCover(playlistId: string): Promise<void> {
+    if (typeof window !== 'undefined' && window.losslessApi?.removePlaylistArtwork) {
+      const res = await window.losslessApi.removePlaylistArtwork(playlistId);
+      if (res.error) {
+        this.showToast(res.error);
+        return;
+      }
+      if (res.playlist) {
+        const mapped = mapPlaylistRecordToUi(res.playlist);
+        this.savePlaylists(
+          this.state.playlists.map((pl) => (pl.id === playlistId ? mapped : pl)),
+        );
+        this.showToast('Đã gỡ ảnh bìa tùy chỉnh');
+      }
+      return;
+    }
+    this.setPlaylistCustomCover(playlistId, null);
   }
 
   setPlaylistCustomCover(playlistId: string, coverUrl: string | null): void {
@@ -1772,15 +2108,53 @@ class UiStore {
     this.showToast(coverUrl ? 'Đã cập nhật ảnh bìa playlist' : 'Đã gỡ ảnh bìa tùy chỉnh');
   }
 
-  addTrackToPlaylist(playlistId: string, trackId: string): void {
+  async addTracksToPlaylist(
+    playlistId: string,
+    trackIds: readonly string[],
+    options?: { allowDuplicates?: boolean },
+  ): Promise<{ addedCount: number; skippedDuplicateCount: number }> {
+    const cleanIds = trackIds.filter((id) => typeof id === 'string' && id.length > 0);
+    if (cleanIds.length === 0) {
+      return { addedCount: 0, skippedDuplicateCount: 0 };
+    }
+
+    if (typeof window !== 'undefined' && window.losslessApi?.addTracksToPlaylist) {
+      const res = await window.losslessApi.addTracksToPlaylist(playlistId, cleanIds, options);
+      const mapped = mapPlaylistRecordToUi(res.playlist);
+      this.savePlaylists(
+        this.state.playlists.map((pl) => (pl.id === playlistId ? mapped : pl)),
+      );
+      if (res.addedCount > 0 && res.skippedDuplicateCount > 0) {
+        this.showToast(
+          `Đã thêm ${res.addedCount} bài vào "${mapped.name}" (bỏ qua ${res.skippedDuplicateCount} bài trùng)`,
+        );
+      } else if (res.addedCount > 0) {
+        this.showToast(`Đã thêm ${res.addedCount} bài vào "${mapped.name}"`);
+      } else if (res.skippedDuplicateCount > 0) {
+        this.showToast(`Tất cả ${res.skippedDuplicateCount} bài đã có trong "${mapped.name}"`);
+      }
+      return {
+        addedCount: res.addedCount,
+        skippedDuplicateCount: res.skippedDuplicateCount,
+      };
+    }
+
+    let addedCount = 0;
+    let skippedDuplicateCount = 0;
+    const allowDup = Boolean(options?.allowDuplicates);
     const updated = this.state.playlists.map((pl) => {
-      if (pl.id !== playlistId) {
-        return pl;
+      if (pl.id !== playlistId) return pl;
+      const existingSet = new Set(pl.trackIds);
+      const nextTrackIds = [...pl.trackIds];
+      for (const tid of cleanIds) {
+        if (!allowDup && existingSet.has(tid)) {
+          skippedDuplicateCount += 1;
+          continue;
+        }
+        existingSet.add(tid);
+        nextTrackIds.push(tid);
+        addedCount += 1;
       }
-      if (pl.trackIds.includes(trackId)) {
-        return pl;
-      }
-      const nextTrackIds = [...pl.trackIds, trackId];
       return {
         ...pl,
         trackIds: nextTrackIds,
@@ -1788,17 +2162,35 @@ class UiStore {
       };
     });
     this.savePlaylists(updated);
-    this.showToast('Đã thêm bài hát vào playlist');
+    this.showToast(
+      addedCount > 0 ? `Đã thêm ${addedCount} bài vào playlist` : 'Bài hát đã có trong playlist',
+    );
+    return { addedCount, skippedDuplicateCount };
   }
 
-  removeTrackFromPlaylist(playlistId: string, trackId: string): void {
+  async addTrackToPlaylist(playlistId: string, trackId: string): Promise<void> {
+    await this.addTracksToPlaylist(playlistId, [trackId]);
+  }
+
+  async removeEntriesFromPlaylist(playlistId: string, entryIds: readonly string[]): Promise<void> {
+    if (entryIds.length === 0) return;
+    if (typeof window !== 'undefined' && window.losslessApi?.removeEntriesFromPlaylist) {
+      const updated = await window.losslessApi.removeEntriesFromPlaylist(playlistId, entryIds);
+      const mapped = mapPlaylistRecordToUi(updated);
+      this.savePlaylists(
+        this.state.playlists.map((pl) => (pl.id === playlistId ? mapped : pl)),
+      );
+      this.showToast(`Đã gỡ ${entryIds.length} bài khỏi playlist`);
+      return;
+    }
+    const entrySet = new Set(entryIds);
     const updated = this.state.playlists.map((pl) => {
-      if (pl.id !== playlistId) {
-        return pl;
-      }
-      const nextTrackIds = pl.trackIds.filter((id) => id !== trackId);
+      if (pl.id !== playlistId) return pl;
+      const nextEntries = (pl.entries ?? []).filter((e) => !entrySet.has(e.entryId));
+      const nextTrackIds = nextEntries.length > 0 ? nextEntries.map((e) => e.trackId) : pl.trackIds;
       return {
         ...pl,
+        entries: nextEntries,
         trackIds: nextTrackIds,
         updatedLabel: `${nextTrackIds.length} bài hát`,
       };
@@ -1807,113 +2199,252 @@ class UiStore {
     this.showToast('Đã gỡ bài hát khỏi playlist');
   }
 
-  deletePlaylist(playlistId: string): void {
+  async removeTrackFromPlaylist(playlistId: string, trackId: string): Promise<void> {
+    const pl = this.state.playlists.find((p) => p.id === playlistId);
+    const entryMatch = pl?.entries?.find((e) => e.trackId === trackId);
+    if (entryMatch && typeof window !== 'undefined' && window.losslessApi?.removeEntriesFromPlaylist) {
+      await this.removeEntriesFromPlaylist(playlistId, [entryMatch.entryId]);
+      return;
+    }
+    const updated = this.state.playlists.map((p) => {
+      if (p.id !== playlistId) return p;
+      const nextTrackIds = p.trackIds.filter((id) => id !== trackId);
+      return {
+        ...p,
+        trackIds: nextTrackIds,
+        updatedLabel: `${nextTrackIds.length} bài hát`,
+      };
+    });
+    this.savePlaylists(updated);
+    this.showToast('Đã gỡ bài hát khỏi playlist');
+  }
+
+  async reorderPlaylistEntries(playlistId: string, orderedEntryIds: readonly string[]): Promise<void> {
+    if (typeof window !== 'undefined' && window.losslessApi?.reorderPlaylistEntries) {
+      const updated = await window.losslessApi.reorderPlaylistEntries(playlistId, orderedEntryIds);
+      const mapped = mapPlaylistRecordToUi(updated);
+      this.savePlaylists(
+        this.state.playlists.map((pl) => (pl.id === playlistId ? mapped : pl)),
+      );
+    }
+  }
+
+  /**
+   * Deletes a playlist cleanly without touching disk audio files or interrupting playback.
+   * When the deleted playlist was currently open, navigates cleanly back to Library -> Playlists overview
+   * and NEVER auto-opens another playlist!
+   */
+  async deletePlaylist(playlistId: string): Promise<void> {
     const target = this.state.playlists.find((p) => p.id === playlistId);
+    if (typeof window !== 'undefined' && window.losslessApi?.deletePlaylist) {
+      await window.losslessApi.deletePlaylist(playlistId);
+    }
     const remaining = this.state.playlists.filter((p) => p.id !== playlistId);
+    const wasViewingDeleted =
+      this.state.route === 'playlist-detail' && this.state.selectedPlaylistId === playlistId;
+
     this.savePlaylists(remaining);
-    if (this.state.route === 'playlist-detail' && this.state.selectedPlaylistId === playlistId) {
-      this.navigate('home');
+
+    if (wasViewingDeleted) {
+      this.setState({
+        selectedPlaylistId: null,
+        route: 'library',
+        libraryTab: 'playlists',
+      });
     }
     if (target) {
       this.showToast(`Đã xóa playlist "${target.name}"`);
     }
   }
 
-  playPlaylist(playlistId: string, shuffleFirst = false): void {
+  isTrackIdPlayable(trackId: string): boolean {
+    const local = libraryStore.getTrackById(trackId);
+    return Boolean(local && local.status === 'available');
+  }
+
+  private persistPlaybackControls(controls: PlaybackControlState): void {
+    this.updatePreferences({ playbackControls: controls });
+  }
+
+  playPlaylist(playlistId: string, shuffleFirst?: boolean): void {
     const playlist = this.state.playlists.find((p) => p.id === playlistId);
     if (!playlist || playlist.trackIds.length === 0) {
       this.showToast('Playlist chưa có bài hát nào để phát.');
       return;
     }
     const allTracks = this.getUnifiedTracks();
-    const playable = playlist.trackIds
-      .map((id) => allTracks.find((t) => t.id === id))
-      .filter((t): t is PrototypeTrack => Boolean(t && t.status === 'available'));
+    const byId = new Map(allTracks.map((t) => [t.id, t]));
+    const playableIds = playlist.trackIds.filter((id) => {
+      const t = byId.get(id);
+      return Boolean(t && t.status === 'available');
+    });
 
-    if (playable.length === 0) {
+    if (playableIds.length === 0) {
       this.showToast('Không có bài hát khả dụng trong playlist này.');
       return;
     }
 
-    const ordered = shuffleFirst
-      ? [...playable].sort(() => Math.random() - 0.5)
-      : playable;
-
-    this.setState({
-      queueTrackIds: ordered.map((t) => t.id),
-      shuffle: shuffleFirst,
-    });
-
-    const first = ordered[0];
-    if (first.source === 'local') {
-      const localRecord = libraryStore.getSnapshot().tracks.find((t) => t.id === first.id);
-      if (localRecord) {
-        void this.playLocalElectronTrack(localRecord);
-        return;
-      }
-    }
-    this.playSampleTrack(first.id);
+    this.playFromContext(
+      {
+        contextId: `playlist-${playlist.id}`,
+        label: playlist.name,
+        kind: 'playlist',
+        trackIds: playableIds,
+      },
+      undefined,
+      shuffleFirst,
+    );
   }
 
   // ---------------------------------------------------------------------------
-  // Queue Controls
+  // Unified Queue Controls (Single Source of Truth -> PlaybackQueueController)
   // ---------------------------------------------------------------------------
 
+  playFromContext(
+    context: PlaybackContextDescriptor,
+    startTrackId?: string,
+    shuffleOverride?: boolean,
+  ): void {
+    const prevControls = playbackQueueController.getControls();
+    const entry = playbackQueueController.startContext({
+      context,
+      startTrackId,
+      shuffle: shuffleOverride,
+    });
+    const nextControls = playbackQueueController.getControls();
+    if (
+      nextControls.shuffleEnabled !== prevControls.shuffleEnabled ||
+      nextControls.repeatMode !== prevControls.repeatMode ||
+      nextControls.autoNextEnabled !== prevControls.autoNextEnabled
+    ) {
+      this.persistPlaybackControls(nextControls);
+    }
+    if (entry) {
+      void this.playQueueEntry(entry);
+    }
+  }
+
+  async playQueueEntry(entry: PlaybackQueueEntry): Promise<void> {
+    const localRecord = libraryStore.getTrackById(entry.trackId);
+    if (localRecord) {
+      this.setState({
+        activeSource: 'local',
+        sampleIsPlaying: false,
+      });
+      await playerActions.playQueueEntry(entry);
+    }
+  }
+
   playNextInQueue(trackId: string): void {
-    const filtered = this.state.queueTrackIds.filter((id) => id !== trackId);
-    const activeIndex = filtered.indexOf(this.state.activeSampleTrackId);
-    const insertAt = activeIndex >= 0 ? activeIndex + 1 : 0;
-    filtered.splice(insertAt, 0, trackId);
-    this.setState({ queueTrackIds: filtered });
+    playbackQueueController.playNext(trackId);
     this.showToast('Đã thêm vào phát tiếp theo');
   }
 
+  addToQueue(trackId: string): void {
+    playbackQueueController.addToQueue(trackId);
+    this.showToast('Đã thêm vào cuối hàng đợi');
+  }
+
+  promoteQueueEntryToPlayNext(queueEntryId: string): void {
+    if (playbackQueueController.promoteUpcomingEntryToPlayNext(queueEntryId)) {
+      this.showToast('Đã đưa lên phát tiếp theo');
+    }
+  }
+
+  playQueueEntryNow(queueEntryId: string): void {
+    const qState = playbackQueueController.getState();
+    if (qState.currentEntry?.queueEntryId === queueEntryId) {
+      void this.playQueueEntry(qState.currentEntry);
+      return;
+    }
+    const fromUpcoming = playbackQueueController.playUpcomingEntryNow(queueEntryId);
+    if (fromUpcoming) {
+      void this.playQueueEntry(fromUpcoming);
+      return;
+    }
+    const fromHistory = playbackQueueController.jumpToHistoryEntry(queueEntryId);
+    if (fromHistory) {
+      void this.playQueueEntry(fromHistory);
+    }
+  }
+
+  playContextIndex(contextOrderIndex: number): void {
+    const entry = playbackQueueController.playContextIndexNow(contextOrderIndex);
+    if (entry) {
+      void this.playQueueEntry(entry);
+    }
+  }
+
+  removeQueueEntry(queueEntryId: string): void {
+    playbackQueueController.removeUpcomingEntry(queueEntryId);
+  }
+
   removeFromQueue(trackId: string): void {
-    this.setState({
-      queueTrackIds: this.state.queueTrackIds.filter((id) => id !== trackId),
-    });
+    const match = playbackQueueController
+      .getState()
+      .upcoming.find((e) => e.trackId === trackId);
+    if (match) {
+      playbackQueueController.removeUpcomingEntry(match.queueEntryId);
+    }
+  }
+
+  moveQueueEntry(queueEntryId: string, direction: -1 | 1): void {
+    playbackQueueController.moveUpcomingEntry(queueEntryId, direction);
+  }
+
+  reorderUpcomingQueue(fromIndex: number, toIndex: number): void {
+    playbackQueueController.reorderUpcoming(fromIndex, toIndex);
   }
 
   moveQueueItem(index: number, direction: -1 | 1): void {
-    const nextIndex = index + direction;
-    if (nextIndex < 0 || nextIndex >= this.state.queueTrackIds.length) {
-      return;
-    }
-    const copy = [...this.state.queueTrackIds];
-    const [item] = copy.splice(index, 1);
-    copy.splice(nextIndex, 0, item);
-    this.setState({ queueTrackIds: copy });
+    playbackQueueController.reorderUpcoming(index, index + direction);
+  }
+
+  clearUpcomingQueue(): void {
+    playbackQueueController.clearUpcoming();
+    this.showToast('Đã xóa các bài kế tiếp');
   }
 
   clearQueue(): void {
-    this.setState({
-      queueTrackIds: [this.state.activeSampleTrackId],
-    });
-    this.showToast('Đã dọn hàng đợi phát');
+    this.clearUpcomingQueue();
+  }
+
+  setShuffle(enabled: boolean): void {
+    const controls = playbackQueueController.setShuffle(enabled);
+    this.persistPlaybackControls(controls);
   }
 
   toggleShuffle(): void {
-    this.setState({ shuffle: !this.state.shuffle });
+    const controls = playbackQueueController.toggleShuffle();
+    this.persistPlaybackControls(controls);
+  }
+
+  setRepeatMode(mode: RepeatMode): void {
+    const controls = playbackQueueController.setRepeatMode(mode);
+    this.persistPlaybackControls(controls);
   }
 
   cycleRepeat(): void {
-    const order: RepeatMode[] = ['off', 'all', 'one'];
-    const idx = order.indexOf(this.state.repeat);
-    this.setState({ repeat: order[(idx + 1) % order.length] });
+    const controls = playbackQueueController.cycleRepeatMode();
+    this.persistPlaybackControls(controls);
   }
 
-  getActiveSampleTrack(): PrototypeTrack {
-    const base =
-      PROTOTYPE_TRACKS.find((t) => t.id === this.state.activeSampleTrackId) ??
-      PROTOTYPE_TRACKS[0];
-    return this.applySampleTrackOverrides(base);
+  setAutoNext(enabled: boolean): void {
+    const controls = playbackQueueController.setAutoNext(enabled);
+    this.persistPlaybackControls(controls);
   }
 
-  getVinylDisplayTrack(): PrototypeTrack {
-    const base =
-      PROTOTYPE_TRACKS.find((t) => t.id === this.state.vinylDisplayTrackId) ??
-      PROTOTYPE_TRACKS[0];
-    return this.applySampleTrackOverrides(base);
+  toggleAutoNext(): void {
+    const controls = playbackQueueController.toggleAutoNext();
+    this.persistPlaybackControls(controls);
+  }
+
+  getActiveSampleTrack(): PrototypeTrack | null {
+    return null;
+  }
+
+  getVinylDisplayTrack(): PrototypeTrack | null {
+    return null;
   }
 
   getCurrentPalette(): AlbumColorPalette {
@@ -1938,10 +2469,18 @@ class UiStore {
       return this.getPaletteForPlaylist(playlist);
     }
     if (this.state.route === 'album-detail') {
-      return getAlbumById(this.state.selectedAlbumId).palette;
+      const album = this.getAlbumById(this.state.selectedAlbumId);
+      return album?.palette ?? computePaletteFromSeed(this.state.selectedAlbumId);
     }
-    const activeTrack = this.getActiveSampleTrack();
-    return getAlbumById(activeTrack.albumId).palette;
+    const qState = playbackQueueController.getState();
+    const currentId = qState.currentEntry?.trackId;
+    if (currentId) {
+      return this.getPaletteForTrack(currentId);
+    }
+    return accentToAlbumPalette(
+      this.getUserAccentPalette(),
+      this.state.preferences.themeMode,
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -2001,275 +2540,63 @@ class UiStore {
     });
   }
 
-  private startSampleSession(track: PrototypeTrack): void {
-    const now = Date.now();
-    this.finalizeSampleSession(true);
-    this.sampleSession = {
-      sessionId: `ls-web-${now}-${Math.random().toString(36).slice(2, 8)}`,
-      track,
-      startedAtMs: now,
-      accumulatedMs: 0,
-      activeSegmentStartMs: now,
-      intervals: [],
-      lastFlushedMs: 0,
-    };
-  }
-
-  private pauseSampleSession(flush: boolean): void {
-    if (!this.sampleSession) {
-      return;
-    }
-    const now = Date.now();
-    if (this.sampleSession.activeSegmentStartMs !== null) {
-      const delta = Math.max(0, now - this.sampleSession.activeSegmentStartMs);
-      if (delta > 0) {
-        this.sampleSession.accumulatedMs += delta;
-        this.sampleSession.intervals.push({
-          startMs: this.sampleSession.activeSegmentStartMs,
-          endMs: now,
-        });
-      }
-      this.sampleSession.activeSegmentStartMs = null;
-    }
-    if (flush) {
-      this.flushSampleSession(true);
-    }
-  }
-
-  private resumeSampleSession(track: PrototypeTrack): void {
-    if (!this.sampleSession || this.sampleSession.track.id !== track.id) {
-      this.startSampleSession(track);
-      return;
-    }
-    if (this.sampleSession.activeSegmentStartMs === null) {
-      this.sampleSession.activeSegmentStartMs = Date.now();
-    }
-  }
-
-  private finalizeSampleSession(flush: boolean): void {
-    if (!this.sampleSession) {
-      return;
-    }
-    this.pauseSampleSession(flush);
-    this.sampleSession = null;
-  }
-
-  private flushSampleSession(force = false): void {
-    if (!this.sampleSession) {
-      return;
-    }
-    const now = Date.now();
-    let totalMs = this.sampleSession.accumulatedMs;
-    const intervals = [...this.sampleSession.intervals];
-    if (this.sampleSession.activeSegmentStartMs !== null) {
-      const delta = Math.max(0, now - this.sampleSession.activeSegmentStartMs);
-      if (delta > 0) {
-        totalMs += delta;
-        intervals.push({
-          startMs: this.sampleSession.activeSegmentStartMs,
-          endMs: now,
-        });
+  playSampleTrack(
+    trackId: string,
+    openNowPlayingView = false,
+    context?: PlaybackContextDescriptor,
+  ): void {
+    const local = libraryStore.getTrackById(trackId);
+    if (local) {
+      void this.playLocalElectronTrack(local, context);
+      if (openNowPlayingView) {
+        this.openNowPlaying();
       }
     }
-    if (totalMs < 1000) {
-      return;
-    }
-    if (!force && totalMs - this.sampleSession.lastFlushedMs < 4000) {
-      return;
-    }
-    this.sampleSession.lastFlushedMs = totalMs;
-    const track = this.sampleSession.track;
-    this.upsertLocalListeningSession({
-      sessionId: this.sampleSession.sessionId,
-      trackId: track.id,
-      trackTitle: track.title,
-      artist: track.artist,
-      album: track.albumTitle,
-      durationMs: track.durationSec * 1000,
-      startedAtMs: this.sampleSession.startedAtMs,
-      endedAtMs: Math.max(this.sampleSession.startedAtMs, now),
-      listenedMs: Math.round(totalMs),
-      activeIntervals: intervals,
-    });
   }
 
-  // ---------------------------------------------------------------------------
-  // Playback & Vinyl Swap
-  // ---------------------------------------------------------------------------
-
-  private clearSwapTimers(): void {
-    for (const timer of this.swapTimers) {
-      clearTimeout(timer);
-    }
-    this.swapTimers = [];
-  }
-
-  private ensureSamplePlaybackTimer(): void {
-    if (this.playbackTimer) {
-      return;
-    }
-    this.playbackTimer = setInterval(() => {
-      if (this.state.activeSource !== 'sample' || !this.state.sampleIsPlaying) {
-        return;
-      }
-      const track = this.getActiveSampleTrack();
-      if (!this.sampleSession || this.sampleSession.track.id !== track.id) {
-        this.startSampleSession(track);
-      } else {
-        this.flushSampleSession(false);
-      }
-
-      const nextTime = this.state.sampleCurrentTimeSec + 0.25;
-      if (nextTime >= track.durationSec) {
-        this.finalizeSampleSession(true);
-        if (this.state.repeat === 'one') {
-          this.setState({ sampleCurrentTimeSec: 0 });
-          this.startSampleSession(track);
-        } else {
-          this.nextTrack();
-        }
-      } else {
-        this.setState({ sampleCurrentTimeSec: nextTime });
-      }
-    }, 250);
-  }
-
-  private triggerVinylSwapTo(targetTrackId: string, startPlaying = true): void {
-    this.clearSwapTimers();
-
-    const targetTrack = PROTOTYPE_TRACKS.find((t) => t.id === targetTrackId);
-    if (!targetTrack) {
-      return;
-    }
-    if (targetTrack.status === 'missing') {
-      this.showToast(
-        `File "${targetTrack.title}" hiện không tồn tại trên ổ đĩa (trạng thái thiếu file).`,
-      );
-      return;
-    }
-
-    const effectiveTrack = this.applySampleTrackOverrides(targetTrack);
-    if (startPlaying) {
-      this.startSampleSession(effectiveTrack);
-    } else {
-      this.finalizeSampleSession(true);
-    }
-
-    const recent = [
-      targetTrackId,
-      ...this.state.recentlyPlayedIds.filter((id) => id !== targetTrackId),
-    ].slice(0, 10);
-
-    const isSameTrack = targetTrackId === this.state.activeSampleTrackId;
-    const shouldAnimateSwap =
-      !isSameTrack &&
-      !this.state.preferences.reducedMotion &&
-      this.state.preferences.vinylAnimation;
-
-    if (!shouldAnimateSwap) {
-      this.setState({
-        activeSource: 'sample',
-        activeSampleTrackId: targetTrackId,
-        vinylDisplayTrackId: targetTrackId,
-        vinylSwapPhase: 'idle',
-        sampleIsPlaying: startPlaying,
-        sampleCurrentTimeSec: 0,
-        recentlyPlayedIds: recent,
-      });
-      if (startPlaying) {
-        this.ensureSamplePlaybackTimer();
-      }
-      return;
-    }
-
-    this.setState({
-      activeSource: 'sample',
-      activeSampleTrackId: targetTrackId,
-      sampleIsPlaying: startPlaying,
-      sampleCurrentTimeSec: 0,
-      vinylSwapPhase: 'tonearm-lift',
-      recentlyPlayedIds: recent,
-    });
-    if (startPlaying) {
-      this.ensureSamplePlaybackTimer();
-    }
-
-    this.swapTimers.push(
-      setTimeout(() => {
-        this.setState({ vinylSwapPhase: 'disc-out' });
-      }, 170),
-    );
-
-    this.swapTimers.push(
-      setTimeout(() => {
-        this.setState({ vinylSwapPhase: 'empty-platter' });
-      }, 490),
-    );
-
-    this.swapTimers.push(
-      setTimeout(() => {
-        this.setState({
-          vinylDisplayTrackId: targetTrackId,
-          vinylSwapPhase: 'disc-in',
-        });
-      }, 630),
-    );
-
-    this.swapTimers.push(
-      setTimeout(() => {
-        this.setState({ vinylSwapPhase: 'tonearm-drop' });
-      }, 920),
-    );
-
-    this.swapTimers.push(
-      setTimeout(() => {
-        this.setState({ vinylSwapPhase: 'idle' });
-      }, 1080),
-    );
-  }
-
-  playSampleTrack(trackId: string, openNowPlayingView = false): void {
-    const track = PROTOTYPE_TRACKS.find((t) => t.id === trackId);
-    if (!track) {
-      return;
-    }
-    if (track.status === 'missing') {
-      this.showToast(`Không thể phát "${track.title}" — file gốc không tồn tại.`);
-      return;
-    }
-    if (this.state.activeSource === 'local') {
-      playerActions.pause();
-    }
-    this.triggerVinylSwapTo(trackId, true);
-    if (openNowPlayingView) {
-      this.openNowPlaying();
-    }
-  }
-
-  playAlbum(albumId: string, shuffleFirst = false): void {
-    const tracks = PROTOTYPE_TRACKS.filter(
+  playAlbum(albumId: string, shuffleFirst?: boolean): void {
+    const allTracks = this.getUnifiedTracks();
+    const album = this.getAlbumById(albumId);
+    const tracks = allTracks.filter(
       (t) => t.albumId === albumId && t.status === 'available',
     );
     if (tracks.length === 0) {
+      this.showToast('Không có bài hát khả dụng trong album này.');
       return;
     }
-    const ordered = shuffleFirst
-      ? [...tracks].sort(() => Math.random() - 0.5)
-      : tracks;
-    this.setState({
-      queueTrackIds: ordered.map((t) => t.id),
-      shuffle: shuffleFirst,
-    });
-    this.playSampleTrack(ordered[0].id);
+    this.playFromContext(
+      {
+        contextId: `album-${albumId}`,
+        label: album?.title ?? tracks[0].albumTitle,
+        kind: 'album',
+        trackIds: tracks.map((t) => t.id),
+      },
+      undefined,
+      shuffleFirst,
+    );
   }
 
-  async playLocalElectronTrack(track: TrackRecord): Promise<void> {
-    this.finalizeSampleSession(true);
+  async playLocalElectronTrack(
+    track: TrackRecord,
+    context?: PlaybackContextDescriptor,
+  ): Promise<void> {
     this.setState({
       activeSource: 'local',
       sampleIsPlaying: false,
     });
-    await playerActions.play(track.id);
+    const resolvedContext: PlaybackContextDescriptor =
+      context ??
+      playbackQueueController.getState().context ?? {
+        contextId: 'library-local',
+        label: 'Thư viện nhạc',
+        kind: 'library',
+        trackIds: libraryStore.getSnapshot().tracks.map((t) => t.id),
+      };
+    const entry = playbackQueueController.playTrackInCurrentOrNewContext(
+      track.id,
+      resolvedContext,
+    );
+    await playerActions.playQueueEntry(entry);
   }
 
   togglePlayPause(): void {
@@ -2277,31 +2604,24 @@ class UiStore {
       void playerActions.togglePlayPause();
       return;
     }
-    const nextPlaying = !this.state.sampleIsPlaying;
-    if (nextPlaying) {
-      this.resumeSampleSession(this.getActiveSampleTrack());
-    } else {
-      this.pauseSampleSession(true);
+    const qState = playbackQueueController.getState();
+    // On first press of Play when no queue context has started yet, prefer local library if available
+    if (!qState.currentEntry) {
+      const firstLocal = libraryStore
+        .getSnapshot()
+        .tracks.find((t) => t.status === 'available');
+      if (firstLocal) {
+        void this.playLocalElectronTrack(firstLocal);
+      } else {
+        this.showToast('Thư viện chưa có bài hát khả dụng để phát.');
+      }
+      return;
     }
-    this.setState({ sampleIsPlaying: nextPlaying });
-    if (nextPlaying) {
-      this.ensureSamplePlaybackTimer();
-    }
+    void playerActions.togglePlayPause();
   }
 
   seek(seconds: number): void {
-    if (this.state.activeSource === 'local') {
-      playerActions.seek(seconds);
-      return;
-    }
-    // Split active session interval without adding seek-skipped duration
-    if (this.state.sampleIsPlaying && this.sampleSession) {
-      this.pauseSampleSession(false);
-      this.sampleSession.activeSegmentStartMs = Date.now();
-    }
-    const track = this.getActiveSampleTrack();
-    const clamped = Math.max(0, Math.min(seconds, track.durationSec));
-    this.setState({ sampleCurrentTimeSec: clamped });
+    playerActions.seek(seconds);
   }
 
   setVolume(value: number): void {
@@ -2319,89 +2639,158 @@ class UiStore {
   }
 
   nextTrack(): void {
-    if (this.state.activeSource === 'local') {
-      void playerActions.next();
-      return;
-    }
-    const availableQueue = this.state.queueTrackIds.filter((id) => {
-      const t = PROTOTYPE_TRACKS.find((x) => x.id === id);
-      return t && t.status === 'available';
-    });
-    if (availableQueue.length === 0) {
-      return;
-    }
-    const currentIdx = availableQueue.indexOf(this.state.activeSampleTrackId);
-    let nextIdx = 0;
-    if (this.state.shuffle && availableQueue.length > 1) {
-      do {
-        nextIdx = Math.floor(Math.random() * availableQueue.length);
-      } while (nextIdx === currentIdx);
-    } else {
-      nextIdx = currentIdx >= 0 ? (currentIdx + 1) % availableQueue.length : 0;
-    }
-    this.triggerVinylSwapTo(availableQueue[nextIdx], true);
+    void playerActions.next();
   }
 
   previousTrack(): void {
-    if (this.state.activeSource === 'local') {
-      void playerActions.previous();
-      return;
-    }
-    if (this.state.sampleCurrentTimeSec > 4) {
-      this.seek(0);
-      return;
-    }
-    const availableQueue = this.state.queueTrackIds.filter((id) => {
-      const t = PROTOTYPE_TRACKS.find((x) => x.id === id);
-      return t && t.status === 'available';
-    });
-    if (availableQueue.length === 0) {
-      return;
-    }
-    const currentIdx = availableQueue.indexOf(this.state.activeSampleTrackId);
-    const prevIdx = currentIdx > 0 ? currentIdx - 1 : availableQueue.length - 1;
-    this.triggerVinylSwapTo(availableQueue[prevIdx], true);
+    void playerActions.previous();
   }
 
-  getUnifiedTracks(): PrototypeTrack[] {
+  private ensureDerivedLibraryCaches(): void {
     const lib = libraryStore.getSnapshot();
-    const mappedLocal: PrototypeTrack[] = lib.tracks.map((t, index) => {
-      return {
+    if (this.cachedTracksSourceRef === lib.tracks) {
+      return;
+    }
+
+    const unifiedTracks: PrototypeTrack[] = new Array(lib.tracks.length);
+    const trackMap = new Map<string, PrototypeTrack>();
+    const byAlbum = new Map<string, PrototypeAlbum>();
+    const albumTrackCounts = new Map<string, number>();
+
+    for (let index = 0; index < lib.tracks.length; index += 1) {
+      const t = lib.tracks[index];
+      const albumTitle = t.album ?? 'Không rõ Album';
+      const albumArtist = t.album_artist ?? t.artist ?? 'Unknown Artist';
+      const albumId = buildAlbumIdSlug(albumTitle, albumArtist);
+      const formatBadge = formatTrackAudioSpecs(t);
+      const container = (t.container ?? t.codec ?? 'AUDIO').toUpperCase();
+      const durationSec = t.duration_ms ? Math.round(t.duration_ms / 1000) : 0;
+      const coverUrl = t.artwork_thumb_url ?? t.artwork_url ?? DEFAULT_DOREMI_ARTWORK_URL;
+
+      const unified: PrototypeTrack = {
         id: t.id,
-        albumId: `local-album-${(t.album ?? 'unknown').toLowerCase()}`,
+        albumId,
         title: t.title,
-        artist: t.artist ?? 'Chưa rõ nghệ sĩ',
-        albumTitle: t.album ?? 'Thư viện cục bộ',
-        trackNumber: index + 1,
-        durationSec: t.duration_ms ? Math.round(t.duration_ms / 1000) : 0,
-        formatBadge: formatTrackAudioSpecs(t),
-        container: (t.container ?? t.codec ?? 'AUDIO').toUpperCase(),
+        artist: t.artist ?? 'Unknown Artist',
+        albumTitle,
+        albumArtist: t.album_artist ?? null,
+        trackNumber: t.track_number ?? index + 1,
+        trackTotal: t.track_total ?? null,
+        discNumber: t.disc_number ?? null,
+        discTotal: t.disc_total ?? null,
+        year: t.year ?? null,
+        genre: t.genre ?? null,
+        composer: t.composer ?? null,
+        lyricist: t.lyricist ?? null,
+        comment: t.comment ?? null,
+        channels: t.channels ?? null,
+        encoder: t.encoder ?? null,
+        fileName: t.file_name ?? null,
+        durationSec,
+        formatBadge,
+        container,
         bitDepth: t.bit_depth,
         sampleRateHz: t.sample_rate_hz,
         bitrateKbps: t.bitrate_bps ? Math.round(t.bitrate_bps / 1000) : 0,
         fileSizeBytes: t.file_size_bytes ?? 0,
-        coverUrl: t.artwork_thumb_url ?? t.artwork_url ?? DEFAULT_DOREMI_ARTWORK_URL,
+        coverUrl,
         status: t.status === 'available' ? 'available' : 'missing',
+        availabilityState:
+          t.availability_state ?? (t.status === 'error' ? 'access_error' : t.status),
+        availabilityReason: t.availability_reason ?? null,
         source: 'local',
-        addedOrder: 1000 + index,
+        addedOrder: index,
         playCount: 0,
         filePathDisplay: t.original_path,
       };
-    });
 
-    const mappedSamples = PROTOTYPE_TRACKS.map((track) =>
-      this.applySampleTrackOverrides(track),
-    );
+      unifiedTracks[index] = unified;
+      trackMap.set(unified.id, unified);
+      albumTrackCounts.set(albumId, (albumTrackCounts.get(albumId) ?? 0) + 1);
 
-    return [...mappedLocal, ...mappedSamples];
+      const existingAlbum = byAlbum.get(albumId);
+      if (!existingAlbum) {
+        byAlbum.set(albumId, {
+          id: albumId,
+          title: albumTitle,
+          artist: albumArtist,
+          year: t.year ?? null,
+          genre: t.genre ?? '',
+          coverUrl: coverUrl !== DEFAULT_DOREMI_ARTWORK_URL ? coverUrl : DEFAULT_DOREMI_ARTWORK_URL,
+          formatLabel: formatBadge || container,
+          palette: computePaletteFromSeed(`${albumTitle}::${albumArtist}`),
+          description: `${albumTitle} — ${albumArtist}`,
+          trackCount: 1,
+          totalDurationSec: durationSec,
+        });
+      } else {
+        existingAlbum.trackCount = (existingAlbum.trackCount ?? 0) + 1;
+        existingAlbum.totalDurationSec = (existingAlbum.totalDurationSec ?? 0) + durationSec;
+        if (!existingAlbum.year && t.year) {
+          existingAlbum.year = t.year;
+        }
+        if (!existingAlbum.genre && t.genre) {
+          existingAlbum.genre = t.genre;
+        }
+        if (
+          existingAlbum.coverUrl === DEFAULT_DOREMI_ARTWORK_URL &&
+          coverUrl !== DEFAULT_DOREMI_ARTWORK_URL
+        ) {
+          existingAlbum.coverUrl = coverUrl;
+        }
+      }
+    }
+
+    this.cachedTracksSourceRef = lib.tracks;
+    this.cachedUnifiedTracks = unifiedTracks;
+    this.cachedUnifiedTrackMap = trackMap;
+    this.cachedDerivedAlbumMap = byAlbum;
+    this.cachedDerivedAlbums = Array.from(byAlbum.values());
+    this.cachedAlbumTrackCounts = albumTrackCounts;
+  }
+
+  getFavoriteIdSet(): Set<string> {
+    if (this.cachedFavoriteIdsRef !== this.state.favoriteIds) {
+      this.cachedFavoriteIdsRef = this.state.favoriteIds;
+      this.cachedFavoriteIdSet = new Set(this.state.favoriteIds);
+    }
+    return this.cachedFavoriteIdSet;
+  }
+
+  isFavoriteTrack(trackId: string): boolean {
+    return this.getFavoriteIdSet().has(trackId);
+  }
+
+  getUnifiedTracks(): PrototypeTrack[] {
+    this.ensureDerivedLibraryCaches();
+    return this.cachedUnifiedTracks;
+  }
+
+  getUnifiedTrackMap(): Map<string, PrototypeTrack> {
+    this.ensureDerivedLibraryCaches();
+    return this.cachedUnifiedTrackMap;
+  }
+
+  getDerivedAlbums(): PrototypeAlbum[] {
+    this.ensureDerivedLibraryCaches();
+    return this.cachedDerivedAlbums;
+  }
+
+  getAlbumById(albumId: string): PrototypeAlbum | null {
+    this.ensureDerivedLibraryCaches();
+    return this.cachedDerivedAlbumMap.get(albumId) ?? null;
   }
 
   getAlbumTrackCount(albumId: string): number {
-    return PROTOTYPE_TRACKS.filter((t) => t.albumId === albumId).length;
+    this.ensureDerivedLibraryCaches();
+    return this.cachedAlbumTrackCounts.get(albumId) ?? 0;
   }
 
-  getSelectedGalleryAlbum(): PrototypeAlbum {
-    return PROTOTYPE_ALBUMS[this.state.selectedAlbumCoverflowIndex] ?? PROTOTYPE_ALBUMS[0];
+  getSelectedGalleryAlbum(): PrototypeAlbum | null {
+    const albums = this.getDerivedAlbums();
+    if (albums.length === 0) return null;
+    const idx = this.state.selectedAlbumCoverflowIndex % albums.length;
+    return albums[idx] ?? albums[0];
   }
 }
 

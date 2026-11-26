@@ -1,18 +1,37 @@
 import { useSyncExternalStore } from 'react';
 import type {
   AppRuntimeInfo,
+  ClearLibraryResult,
   ImportSummary,
+  LibraryExclusionRecord,
   LibraryRootRecord,
+  ReimportExcludedResult,
+  RelinkSingleFileResult,
+  RemoveTracksResult,
+  RemoveWatchedFolderMode,
+  RemoveWatchedFolderResult,
   ScanProgressEvent,
+  WatchedFolderSummary,
 } from '../../../shared/types/library';
 import type {
+  RelinkApplyResult,
+  RelinkApplySelection,
+  RelinkScanResult,
+} from '../../../shared/types/stage6';
+import type {
+  TrackAvailabilityState,
   TrackMetadataOverrideInput,
   TrackRecord,
   TrackStatus,
 } from '../../../shared/types/track';
-import { syncEngineQueue } from './player-store';
+import { playbackQueueController, syncEngineQueue } from './player-store';
 
-export type TrackFilterMode = 'all' | 'available' | 'missing';
+export type TrackFilterMode =
+  | 'all'
+  | 'available'
+  | 'missing'
+  | 'source_unavailable'
+  | 'access_error';
 
 export interface LibraryStoreState {
   isElectronAvailable: boolean;
@@ -46,12 +65,17 @@ class LibraryStore {
   };
 
   private readonly listeners = new Set<() => void>();
+  private trackMap = new Map<string, TrackRecord>();
   private initialized = false;
   private cleanups: Array<() => void> = [];
 
   getSnapshot = (): LibraryStoreState => {
     return this.state;
   };
+
+  getTrackById(trackId: string): TrackRecord | undefined {
+    return this.trackMap.get(trackId);
+  }
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -80,7 +104,7 @@ class LibraryStore {
     const unsubProgress = api.onScanProgress((event) => {
       this.setState({
         scanProgress: event,
-        isScanning: event.phase !== 'completed',
+        isScanning: event.phase !== 'completed' && event.phase !== 'canceled',
       });
     });
 
@@ -174,23 +198,204 @@ class LibraryStore {
     }
   }
 
-  async rescanLibrary(): Promise<void> {
+  async rescanLibrary(): Promise<ImportSummary | null> {
     const api = window.losslessApi;
     if (!api || this.state.isScanning) {
-      return;
+      return null;
     }
     this.setState({ isScanning: true, runtimeError: null, scanProgress: null });
     try {
       const summary = await api.rescanLibrary();
       this.setState({ lastSummary: summary });
       await this.refreshSnapshot();
+      return summary;
     } catch (error) {
       this.setState({
         runtimeError: `Lỗi khi quét lại thư viện: ${error instanceof Error ? error.message : String(error)}`,
       });
+      return null;
     } finally {
       this.setState({ isScanning: false });
     }
+  }
+
+  async cancelRescan(): Promise<boolean> {
+    const api = window.losslessApi;
+    if (!api?.cancelRescan) {
+      return false;
+    }
+    const res = await api.cancelRescan();
+    return Boolean(res.canceled);
+  }
+
+  async removeTracks(
+    trackIds: readonly string[],
+    options?: { addExclusion?: boolean },
+  ): Promise<RemoveTracksResult> {
+    const api = window.losslessApi;
+    if (!api?.removeTracksFromLibrary) {
+      return { removedTrackIds: [], excludedCount: 0, notFoundIds: [...trackIds] };
+    }
+    const res = await api.removeTracksFromLibrary(trackIds, options);
+    if (res.removedTrackIds.length > 0) {
+      playbackQueueController.removeTracksFromQueue(res.removedTrackIds);
+      await this.refreshSnapshot();
+    }
+    return res;
+  }
+
+  async showTrackInFolder(trackId: string): Promise<{ shown: boolean; error?: string }> {
+    const api = window.losslessApi;
+    if (!api?.showTrackInFolder) {
+      return { shown: false, error: 'Chức năng mở trong File Explorer yêu cầu bản desktop Electron.' };
+    }
+    return api.showTrackInFolder(trackId);
+  }
+
+  async listWatchedFolders(): Promise<WatchedFolderSummary[]> {
+    const api = window.losslessApi;
+    if (!api?.listWatchedFolders) {
+      return [];
+    }
+    return api.listWatchedFolders();
+  }
+
+  async updateRootSettings(
+    rootId: string,
+    patch: { recursive?: boolean; enabled?: boolean; auto_watch?: boolean },
+  ): Promise<LibraryRootRecord | null> {
+    const api = window.losslessApi;
+    if (!api?.updateLibraryRootSettings) {
+      return null;
+    }
+    const updated = await api.updateLibraryRootSettings(rootId, patch);
+    await this.refreshSnapshot();
+    return updated;
+  }
+
+  async rescanWatchedFolder(rootId: string): Promise<ImportSummary | null> {
+    const api = window.losslessApi;
+    if (!api?.rescanWatchedFolder || this.state.isScanning) {
+      return null;
+    }
+    this.setState({ isScanning: true, runtimeError: null, scanProgress: null });
+    try {
+      const summary = await api.rescanWatchedFolder(rootId);
+      this.setState({ lastSummary: summary });
+      await this.refreshSnapshot();
+      return summary;
+    } catch (error) {
+      this.setState({
+        runtimeError: `Lỗi khi quét thư mục: ${error instanceof Error ? error.message : String(error)}`,
+      });
+      return null;
+    } finally {
+      this.setState({ isScanning: false });
+    }
+  }
+
+  async removeWatchedFolder(
+    rootId: string,
+    mode: RemoveWatchedFolderMode,
+  ): Promise<RemoveWatchedFolderResult | null> {
+    const api = window.losslessApi;
+    if (!api?.removeWatchedFolder) {
+      return null;
+    }
+    const res = await api.removeWatchedFolder(rootId, mode);
+    if (res.removedTrackIds.length > 0) {
+      playbackQueueController.removeTracksFromQueue(res.removedTrackIds);
+    }
+    await this.refreshSnapshot();
+    return res;
+  }
+
+  async clearAllImportedMusic(): Promise<ClearLibraryResult | null> {
+    const api = window.losslessApi;
+    if (!api?.clearAllImportedMusic) {
+      return null;
+    }
+    const currentIds = this.state.tracks.map((t) => t.id);
+    const res = await api.clearAllImportedMusic();
+    if (currentIds.length > 0) {
+      playbackQueueController.removeTracksFromQueue(currentIds);
+    }
+    await this.refreshSnapshot();
+    return res;
+  }
+
+  async listExcludedTracks(): Promise<LibraryExclusionRecord[]> {
+    const api = window.losslessApi;
+    if (!api?.listExcludedTracks) {
+      return [];
+    }
+    return api.listExcludedTracks();
+  }
+
+  async reimportExcludedTracks(exclusionIds?: readonly string[]): Promise<ReimportExcludedResult | null> {
+    const api = window.losslessApi;
+    if (!api?.reimportExcludedTracks) {
+      return null;
+    }
+    const res = await api.reimportExcludedTracks(exclusionIds);
+    this.setState({ lastSummary: res.summary });
+    await this.refreshSnapshot();
+    return res;
+  }
+
+  async clearExclusions(exclusionIds?: readonly string[]): Promise<number> {
+    const api = window.losslessApi;
+    if (!api?.clearExclusions) {
+      return 0;
+    }
+    const res = await api.clearExclusions(exclusionIds);
+    return res.clearedCount;
+  }
+
+  async relinkSingleTrackDialog(trackId: string): Promise<RelinkSingleFileResult> {
+    const api = window.losslessApi;
+    if (!api?.relinkSingleTrackDialog) {
+      return {
+        canceled: false,
+        success: false,
+        track: null,
+        error: 'Chức năng liên kết lại file yêu cầu chạy trong ứng dụng Electron.',
+      };
+    }
+    const res = await api.relinkSingleTrackDialog(trackId);
+    if (res.success && res.track) {
+      this.updateTrackInPlace(res.track);
+    }
+    return res;
+  }
+
+  async scanRelinkFolder(): Promise<RelinkScanResult> {
+    const api = window.losslessApi;
+    if (!api?.scanRelinkFolder) {
+      return {
+        canceled: false,
+        totalMissingTracks: 0,
+        matchedCount: 0,
+        ambiguousCount: 0,
+        unmatchedCount: 0,
+        conflictCount: 0,
+        proposals: [],
+        error: 'Chức năng quét liên kết lại thư mục yêu cầu chạy trong ứng dụng Electron.',
+      };
+    }
+    return api.scanRelinkFolder();
+  }
+
+  async applyRelink(selections: readonly RelinkApplySelection[]): Promise<RelinkApplyResult> {
+    const api = window.losslessApi;
+    if (!api?.applyRelink) {
+      return { relinkedCount: 0, failedCount: selections.length, errors: [] };
+    }
+    const res = await api.applyRelink(selections);
+    if (res.relinkedCount > 0) {
+      await this.refreshSnapshot();
+    }
+    return res;
   }
 
   /**
@@ -260,8 +465,20 @@ class LibraryStore {
   }
 
   applyTrackStatusLocally(trackId: string, status: TrackStatus): void {
+    const availState: TrackAvailabilityState =
+      status === 'available'
+        ? 'available'
+        : status === 'error'
+          ? 'access_error'
+          : 'missing';
     const nextTracks = this.state.tracks.map((track) =>
-      track.id === trackId ? { ...track, status } : track,
+      track.id === trackId
+        ? {
+            ...track,
+            status,
+            availability_state: availState,
+          }
+        : track,
     );
     this.setState({ tracks: nextTracks });
     syncEngineQueue(nextTracks);
@@ -288,6 +505,9 @@ class LibraryStore {
 
   private setState(partial: Partial<LibraryStoreState>): void {
     this.state = { ...this.state, ...partial };
+    if (partial.tracks !== undefined) {
+      this.trackMap = new Map(partial.tracks.map((t) => [t.id, t]));
+    }
     for (const listener of this.listeners) {
       listener();
     }

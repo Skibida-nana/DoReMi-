@@ -185,6 +185,29 @@ export function groupTimedLyricLines(
   return groups;
 }
 
+function binarySearchLastTimestampAtOrBefore(
+  items: readonly { timeSec: number }[],
+  currentTimeSec: number,
+): number {
+  if (items.length === 0 || !Number.isFinite(currentTimeSec)) {
+    return -1;
+  }
+  const threshold = currentTimeSec + 0.05;
+  let lo = 0;
+  let hi = items.length - 1;
+  let active = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (items[mid].timeSec <= threshold) {
+      active = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return active;
+}
+
 /**
  * Finds the active timed lyric index for a given playback position in seconds.
  * Returns -1 before the first timestamp.
@@ -193,18 +216,7 @@ export function findActiveLyricLineIndex(
   timedLines: readonly TimedLyricEntry[],
   currentTimeSec: number,
 ): number {
-  if (timedLines.length === 0 || !Number.isFinite(currentTimeSec)) {
-    return -1;
-  }
-  let active = -1;
-  for (let i = 0; i < timedLines.length; i += 1) {
-    if (currentTimeSec + 0.05 >= timedLines[i].timeSec) {
-      active = i;
-    } else {
-      break;
-    }
-  }
-  return active;
+  return binarySearchLastTimestampAtOrBefore(timedLines, currentTimeSec);
 }
 
 /**
@@ -215,16 +227,5 @@ export function findActiveLyricGroupIndex(
   groups: readonly TimedLyricGroup[],
   currentTimeSec: number,
 ): number {
-  if (groups.length === 0 || !Number.isFinite(currentTimeSec)) {
-    return -1;
-  }
-  let active = -1;
-  for (let i = 0; i < groups.length; i += 1) {
-    if (currentTimeSec + 0.05 >= groups[i].timeSec) {
-      active = i;
-    } else {
-      break;
-    }
-  }
-  return active;
+  return binarySearchLastTimestampAtOrBefore(groups, currentTimeSec);
 }

@@ -6,16 +6,17 @@ import test from 'node:test';
 import { AudioProcessingService } from '../src/main/services/codec/audio-processing-service';
 import { CodecManager } from '../src/main/services/codec/codec-manager';
 import { ResourcePolicyManager } from '../src/main/services/codec/resource-policy';
+import {
+  createMockCodecManager,
+  writeCrossPlatformMockCli,
+} from './helpers/cross-platform-codec-harness';
 
 async function createTempDir(prefix: string): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), prefix));
 }
 
 async function writeMockExecutable(dir: string, fileName: string, scriptBody: string): Promise<string> {
-  const fullPath = path.join(dir, fileName);
-  await fs.writeFile(fullPath, `#!/usr/bin/env node\n${scriptBody}\n`, 'utf8');
-  await fs.chmod(fullPath, 0o755);
-  return fullPath;
+  return writeCrossPlatformMockCli(dir, fileName, scriptBody);
 }
 
 test('Phase 03B Resource Policy: Power Saving default (concurrency=1), Balanced & Performance bounds', () => {
@@ -119,11 +120,10 @@ test('Phase 03B Resource Policy: Power Saving defers queued conversion during pl
     `,
   );
 
-  const codecManager = new CodecManager({
+  const codecManager = createMockCodecManager({
     userDataDir: userData,
     platform: process.platform,
     arch: process.arch,
-    allowPosixTestScripts: true,
   });
   await codecManager.importCustomBinary('flac', mockFlac, {
     userConfirmed: true,

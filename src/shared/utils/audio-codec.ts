@@ -179,3 +179,95 @@ export function isAlacTrackMetadata(
 ): boolean {
   return classifyTrackAudioCodec(track).family === 'alac';
 }
+
+const VALID_ALAC_BIT_DEPTHS = new Set([8, 16, 20, 24, 32]);
+
+export function toValidatedAudioPositiveInt(
+  value: number | null | undefined,
+  maxAllowed = 10_000_000,
+): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return null;
+  }
+  const rounded = Math.round(value);
+  if (rounded <= 0 || rounded > maxAllowed) {
+    return null;
+  }
+  return rounded;
+}
+
+export interface Mp4ProbeResolutionInput {
+  mp4Probe: {
+    codec: 'alac' | 'aac' | 'unknown';
+    sampleRateHz: number | null;
+    bitDepth: number | null;
+    channels: number | null;
+  };
+  parsedCodec: string | null;
+  parsedContainer: string | null;
+  parsedSampleRateHz: number | null;
+  parsedBitDepth: number | null;
+  parsedChannels: number | null;
+}
+
+export interface Mp4ProbeResolutionOutput {
+  codec: string | null;
+  container: string | null;
+  sampleRateHz: number | null;
+  bitDepth: number | null;
+  channels: number | null;
+}
+
+/**
+ * Authoritative shared MP4/M4A metadata resolver used by both MetadataService and AudioAnalyzerService.
+ * - For ALAC: verified `ALACSpecificConfig` fields take strict priority over generic MP4/stsd parser fields
+ *   (fixing Hi-Res >65.5 kHz sample rates like 88.2/96/176.4/192 kHz that overflow ISO-BMFF 16.16 stsd).
+ * - For AAC: enforces `bitDepth = null` (never exposes container-default 16-bit for lossy AAC).
+ * - Never fabricates default sample rate (44100/48000), bit depth (16), or channel count (2).
+ */
+export function resolveMp4AudioMetadataOverride(
+  input: Mp4ProbeResolutionInput,
+): Mp4ProbeResolutionOutput {
+  const probeRate = toValidatedAudioPositiveInt(input.mp4Probe.sampleRateHz, 768_000);
+  const probeBitsRaw = toValidatedAudioPositiveInt(input.mp4Probe.bitDepth, 64);
+  const probeBits =
+    probeBitsRaw !== null && VALID_ALAC_BIT_DEPTHS.has(probeBitsRaw) ? probeBitsRaw : null;
+  const probeChannels = toValidatedAudioPositiveInt(input.mp4Probe.channels, 32);
+
+  const parsedRate = toValidatedAudioPositiveInt(input.parsedSampleRateHz, 768_000);
+  const parsedBits = toValidatedAudioPositiveInt(input.parsedBitDepth, 64);
+  const parsedChannels = toValidatedAudioPositiveInt(input.parsedChannels, 32);
+
+  if (input.mp4Probe.codec === 'alac') {
+    const validatedParsedBits =
+      parsedBits !== null && VALID_ALAC_BIT_DEPTHS.has(parsedBits) ? parsedBits : null;
+    return {
+      codec: 'ALAC',
+      container: 'M4A',
+      sampleRateHz: probeRate ?? parsedRate,
+      bitDepth: probeBits ?? validatedParsedBits,
+      channels: probeChannels ?? parsedChannels,
+    };
+  }
+
+  if (
+    input.mp4Probe.codec === 'aac' ||
+    (input.parsedCodec && /AAC|MP4A/i.test(input.parsedCodec))
+  ) {
+    return {
+      codec: 'AAC',
+      container: 'M4A',
+      sampleRateHz: parsedRate,
+      bitDepth: null,
+      channels: parsedChannels,
+    };
+  }
+
+  return {
+    codec: input.parsedCodec,
+    container: input.parsedContainer,
+    sampleRateHz: parsedRate,
+    bitDepth: parsedBits,
+    channels: parsedChannels,
+  };
+}

@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { AudioWaveform, Check } from 'lucide-react';
 import type { FadeDurationSec } from '../../../shared/types/stage5';
 import { uiStore, useUiState } from '../stores/ui-store';
+import { AnchoredPopover } from './OverlayLayer';
 import { SettingToggleRow } from './ToggleSwitch';
 
 const FADE_OPTIONS: FadeDurationSec[] = [0.5, 1, 2, 3];
@@ -22,37 +23,16 @@ export function PlaybackTransitionControl({
   const ui = useUiState();
   const { enabled, durationSec } = ui.preferences.transition;
   const [open, setOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-    const handlePointerDown = (event: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setOpen(false);
-      }
-    };
-    window.addEventListener('mousedown', handlePointerDown);
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      window.removeEventListener('mousedown', handlePointerDown);
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [open]);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
 
   const statusText = enabled
     ? `Đang bật · ${durationSec}s`
     : 'Đang tắt';
 
   return (
-    <div ref={containerRef} className="relative">
+    <div className="relative">
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setOpen((prev) => !prev)}
         aria-label="Chuyển bài mượt (Fade In/Out)"
@@ -79,13 +59,17 @@ export function PlaybackTransitionControl({
         <span className="hidden xl:inline">{enabled ? `${durationSec}s` : 'Fade'}</span>
       </button>
 
-      {open && (
-        <div
-          role="dialog"
-          aria-label="Cài đặt Chuyển bài mượt"
-          data-testid="now-playing-fade-popover"
-          className="lp-glass-pill absolute bottom-12 right-0 z-50 w-[268px] rounded-2xl p-4"
-        >
+      <AnchoredPopover
+        open={open}
+        anchorRef={triggerRef}
+        onClose={() => setOpen(false)}
+        placement="top"
+        align="end"
+        role="dialog"
+        ariaLabel="Cài đặt Chuyển bài mượt"
+        testId="now-playing-fade-popover"
+        className="lp-glass-pill w-[268px] rounded-2xl p-4"
+      >
           <SettingToggleRow
             variant="compact"
             label="Chuyển bài mượt"
@@ -146,8 +130,7 @@ export function PlaybackTransitionControl({
               {statusText}
             </span>
           </div>
-        </div>
-      )}
+      </AnchoredPopover>
     </div>
   );
 }

@@ -1,6 +1,5 @@
 import { ArrowLeft, Play, Shuffle } from 'lucide-react';
 import { DEFAULT_DOREMI_ARTWORK_URL } from '../assets/default-artwork';
-import { PROTOTYPE_ALBUMS } from '../data/prototype-catalog';
 import { useLibraryState } from '../stores/library-store';
 import { uiStore, useUiState } from '../stores/ui-store';
 import { formatDurationSeconds } from '../utils/formatters';
@@ -14,31 +13,36 @@ export function ArtistDetailPage() {
   const artistName = ui.selectedArtistName;
   const allTracks = uiStore.getUnifiedTracks();
   const artistTracks = allTracks.filter((t) => t.artist === artistName);
-  const artistAlbums = PROTOTYPE_ALBUMS.filter((a) => a.artist === artistName);
+  const artistAlbums = uiStore.getDerivedAlbums().filter((a) => a.artist === artistName);
   const heroCover =
     artistTracks[0]?.coverUrl ?? artistAlbums[0]?.coverUrl ?? DEFAULT_DOREMI_ARTWORK_URL;
   const heroGlowRgb = artistAlbums[0]?.palette.glowRgb ?? accent.glowRgb;
 
   const uniqueAlbumCount = new Set(artistTracks.map((t) => t.albumTitle)).size;
 
+  const artistContext = {
+    contextId: `artist-${artistName}`,
+    label: artistName,
+    kind: 'artist' as const,
+    trackIds: artistTracks.filter((t) => t.status === 'available').map((t) => t.id),
+  };
+
   const playTrack = (trackId: string, source: 'local' | 'sample') => {
     if (source === 'local') {
       const real = library.tracks.find((t) => t.id === trackId);
       if (real) {
-        void uiStore.playLocalElectronTrack(real);
+        void uiStore.playLocalElectronTrack(real, artistContext);
         return;
       }
     }
-    uiStore.playSampleTrack(trackId);
+    uiStore.playSampleTrack(trackId, false, artistContext);
   };
 
   const playAll = (shuffle: boolean) => {
-    const playable = artistTracks.filter((t) => t.status === 'available');
-    if (playable.length === 0) {
+    if (artistContext.trackIds.length === 0) {
       return;
     }
-    const ordered = shuffle ? [...playable].sort(() => Math.random() - 0.5) : playable;
-    playTrack(ordered[0].id, ordered[0].source);
+    uiStore.playFromContext(artistContext, undefined, shuffle);
   };
 
   return (

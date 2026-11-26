@@ -1,5 +1,4 @@
 import {
-  AlertCircle,
   Loader2,
   Pause,
   Play,
@@ -8,6 +7,7 @@ import {
   Volume2,
   VolumeX,
 } from 'lucide-react';
+import { PlaybackErrorBanner } from './PlaybackErrorBanner';
 import { playerActions, usePlaybackState } from '../stores/player-store';
 import {
   formatDurationSeconds,
@@ -40,13 +40,13 @@ export function PlaybackBar() {
       className="border-t border-zinc-800/90 bg-zinc-950 px-5 py-3 shrink-0"
     >
       {errorMessage && (
-        <div
-          role="alert"
-          className="mb-2.5 flex items-center gap-2 rounded border border-rose-500/35 bg-rose-950/35 px-3 py-1.5 text-xs text-rose-200"
-        >
-          <AlertCircle className="h-3.5 w-3.5 shrink-0 text-rose-400" aria-hidden="true" />
-          <span className="truncate">{errorMessage}</span>
-        </div>
+        <PlaybackErrorBanner
+          errorMessage={errorMessage}
+          playbackError={playback.playbackError}
+          onRetry={() => void playerActions.resume()}
+          compact
+          className="mb-2.5"
+        />
       )}
 
       <div className="grid grid-cols-[minmax(200px,1fr)_minmax(320px,1.5fr)_minmax(180px,1fr)] items-center gap-6">

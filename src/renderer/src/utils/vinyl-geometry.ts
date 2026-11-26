@@ -1,14 +1,14 @@
 /**
  * Pure mathematical geometry for the DoReMi Hi-Fi Vinyl Turntable, Circular Progress Ring,
- * and Right-Side Sculpted Tonearm.
+ * and Top-Entering Editorial Tonearm (shared between Now Playing and Focus Vinyl).
  *
  * Every coordinate is derived strictly from the vinyl center `(cx, cy)` and stage diameter `S`,
- * guaranteeing that at ALL viewports (1920x1080, 1440x900, 1366x768, 1024x768):
- * - The circular progress ring stays crisp and unclipped with ~8–16px vertical breathing room.
- * - The vinyl disc remains a true circle (never oval).
- * - The tonearm pivot sits on the upper-right outside the progress ring.
+ * guaranteeing that at ALL viewports (2560x1440, 1920x1080, 1440x900, 1366x768, 1024x768):
+ * - The vinyl disc remains a true circle (never elliptical).
+ * - The tonearm pivot sits at the upper-right above the platter (`r = 546 > ringRadius 482`),
+ *   allowing the base/pivot to crop naturally past the top edge when enlarged in Focus Vinyl.
  * - While playing, the stylus tip ALWAYS rests squarely inside the playable vinyl groove band
- *   (strictly outside the center artwork label and strictly inside the outer vinyl rim).
+ *   (strictly outside the center artwork label `146` and strictly inside the outer vinyl rim `418`).
  * - While paused or swapping discs, the stylus parks cleanly outside the progress ring.
  */
 
@@ -22,7 +22,7 @@ export interface VinylStageSizingInput {
 export interface VinylStageSizing {
   /** Square diameter of the circular progress ring canvas (px) */
   ringCanvasSize: number;
-  /** Total horizontal stage width including the right-side tonearm gimbal (px) */
+  /** Total horizontal stage width including the tonearm swing clearance (px) */
   stageWidth: number;
   /** Total vertical stage height (px) */
   stageHeight: number;
@@ -35,14 +35,10 @@ export interface VinylStageSizing {
 }
 
 export interface VinylTonearmGeometry {
-  /** Normalized SVG viewBox width (in 1000-unit height space) */
   viewBoxWidth: number;
-  /** Normalized SVG viewBox height (always 1000) */
   viewBoxHeight: number;
-  /** Vinyl center coordinates in viewBox space */
   cx: number;
   cy: number;
-  /** Radii in viewBox space (out of 1000 height) */
   ringRadius: number;
   deckRadius: number;
   platterRadius: number;
@@ -50,20 +46,14 @@ export interface VinylTonearmGeometry {
   labelRadius: number;
   grooveInnerRadius: number;
   grooveOuterRadius: number;
-  /** Right-side tonearm pivot coordinates in viewBox space */
   pivotX: number;
   pivotY: number;
-  /** Base stylus coordinates at angleDeg = 0 (outer playable groove) */
   baseNeedleX: number;
   baseNeedleY: number;
-  /** Effective rotation angle (degrees around pivot) */
   angleDeg: number;
-  /** Actual rotated stylus coordinates in viewBox space */
   needleX: number;
   needleY: number;
-  /** Distance from vinyl center (cx, cy) to the rotated stylus tip */
   needleRadiusFromCenter: number;
-  /** True when stylus sits strictly inside the playable vinyl groove band */
   isNeedleOnGrooves: boolean;
 }
 
@@ -80,18 +70,15 @@ export const VINYL_LABEL_RADIUS = 146;
 export const VINYL_GROOVE_INNER_RADIUS = 182;
 export const VINYL_GROOVE_OUTER_RADIUS = 392;
 
-// Upper-right pivot anchored outside the progress ring (distance = 610 > ringRadius 482)
-export const TONEARM_PIVOT_X = 1005;
-export const TONEARM_PIVOT_Y = 158;
+// Upper-right top-entering pivot above the platter rim (distance from (500,500) = 546.3 > 482)
+export const TONEARM_PIVOT_X = 768;
+export const TONEARM_PIVOT_Y = 24;
 
-// Base needle landing at outer playable groove (dx = -195, dy = +492 from pivot => x=810, y=650)
-// Distance from center (500, 500) = hypot(310, 150) = 344.38 -> squarely inside [182, 392]!
-export const TONEARM_BASE_NEEDLE_X = 810;
-export const TONEARM_BASE_NEEDLE_Y = 650;
+// Base needle landing at outer playable groove (dx = +293, dy = +136 from center => r = 323.0)
+// Headshell translate(808, 595) rotate(20) with local tip (0, 44) lands cleanly at (793, 636)!
+export const TONEARM_BASE_NEEDLE_X = 793;
+export const TONEARM_BASE_NEEDLE_Y = 636;
 
-/**
- * Rotates a point `(px, py)` around `(ox, oy)` by `angleDeg` clockwise in SVG screen space.
- */
 export function rotatePoint2D(
   px: number,
   py: number,
@@ -111,12 +98,12 @@ export function rotatePoint2D(
 }
 
 /**
- * Computes exact right-side tonearm angle & stylus tip coordinates relative to the vinyl center.
+ * Computes exact top-entering tonearm angle & stylus tip coordinates relative to the vinyl center.
  *
- * - Playing (`ratio` in 0..1): smoothly tracks across grooves from +0.5deg (outer groove, r≈341)
- *   to +9.5deg (inner groove, r≈257) — ALWAYS strictly inside `[182, 392]`, never crossing label `146`.
- * - Paused: rotates outward to `-18.5deg` (r≈511), resting neatly just outside the progress ring (`482`).
- * - Swapping disc: rotates further outward to `-24deg` (r≈560), clearing the entire platter.
+ * - Playing (`ratio` in 0..1): tracks monotonically inward across grooves from +1deg (r≈312)
+ *   to +12deg (r≈208) — strictly inside `[182, 392]`, never crossing center label `146`.
+ * - Paused: rotates outward to `-20deg` (r≈508), resting cleanly outside the progress ring (`482`).
+ * - Swapping disc: rotates further outward to `-26deg` (r≈561), clearing the platter.
  */
 export function computeVinylTonearmGeometry(options: {
   isPlaying: boolean;
@@ -131,13 +118,11 @@ export function computeVinylTonearmGeometry(options: {
 
   let angleDeg: number;
   if (options.isSwappingOff) {
-    angleDeg = -24;
+    angleDeg = -26;
   } else if (options.isPlaying || options.forceOnGroove) {
-    // Track gracefully from outer playable groove (0.5deg) to inner groove (9.5deg)
-    angleDeg = 0.5 + safeRatio * 9;
+    angleDeg = 1 + safeRatio * 11;
   } else {
-    // Parked neatly outside progress ring on resting post
-    angleDeg = -18.5;
+    angleDeg = -20;
   }
 
   const tip = rotatePoint2D(
@@ -178,25 +163,21 @@ export function computeVinylTonearmGeometry(options: {
 }
 
 /**
- * Computes responsive Hero Vinyl dimensions across desktop viewports (1024..1920+)
- * so the progress ring fills ~92–96% of Hero height whenever horizontal space allows,
- * with ~8–16px top/bottom margin and zero overlap with the Right Editorial column.
+ * Computes responsive Hero Vinyl dimensions across desktop viewports (1024..2560+).
+ * In Standard (3-zone Now Playing) mode, sizes the turntable to anchor ~40-44% center column cleanly;
+ * in Focus mode returns proportional base metrics used for Focus stage bounds.
  */
 export function computeNowPlayingVinylSizing(input: VinylStageSizingInput): VinylStageSizing {
   const sidebarW = input.sidebarWidth ?? (input.viewportWidth >= 1024 ? 76 : 0);
   const mainWidth = Math.max(360, input.viewportWidth - sidebarW);
 
-  // Slim header (42px) + slim bottom bar (68px) in Standard Mode;
-  // Floating overlay controls only in Focus Vinyl Mode (more vertical canvas!)
   const headerH = input.isFocusMode ? 20 : 42;
   const bottomH = input.isFocusMode ? 64 : 68;
   const heroHeight = Math.max(320, input.viewportHeight - headerH - bottomH);
 
-  // Target 12px margin above & below the circular progress ring (total 24px vertical breathing room)
   const targetVerticalMargin = heroHeight >= 740 ? 12 : 10;
   const maxRingDiameterByHeight = Math.max(280, heroHeight - targetVerticalMargin * 2);
 
-  // Allocate Hero column width proportionally so Right Panel always stays spacious & readable
   const heroWidthRatio = input.isFocusMode
     ? input.viewportWidth >= 1280
       ? 0.58
@@ -211,13 +192,10 @@ export function computeNowPlayingVinylSizing(input: VinylStageSizingInput): Viny
 
   const heroColumnWidth = Math.floor(mainWidth * heroWidthRatio);
 
-  // Stage width = ringCanvasSize * (VINYL_VIEWBOX_WIDTH / VINYL_VIEWBOX_HEIGHT) = 1.10 * ringCanvasSize
   const aspectRatio = VINYL_VIEWBOX_WIDTH / VINYL_VIEWBOX_HEIGHT;
-  // Keep full circular progress ring + right-side tonearm gimbal cleanly inside heroColumnWidth
   const horizontalPad = input.isFocusMode ? 20 : 24;
   const maxRingDiameterByWidth = Math.floor((heroColumnWidth - horizontalPad) / aspectRatio);
 
-  // In Standard Mode, cap at 880px on huge monitors; in Focus Mode, allow +6-10% larger up to 940px
   const absoluteMax = input.isFocusMode ? 940 : 880;
   const ringCanvasSize = Math.max(
     280,
@@ -227,7 +205,6 @@ export function computeNowPlayingVinylSizing(input: VinylStageSizingInput): Viny
   const stageHeight = ringCanvasSize;
   const stageWidth = Math.round(ringCanvasSize * aspectRatio);
 
-  // Actual ring diameter is 2 * (VINYL_RING_RADIUS / VINYL_VIEWBOX_HEIGHT) * ringCanvasSize
   const actualRingDiameter = (VINYL_RING_RADIUS * 2 * ringCanvasSize) / VINYL_VIEWBOX_HEIGHT;
   const verticalRingMarginPx = Math.max(0, Math.round((heroHeight - actualRingDiameter) / 2));
 

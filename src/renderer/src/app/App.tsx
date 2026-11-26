@@ -1,24 +1,52 @@
-import { useEffect, type CSSProperties } from 'react';
+import { lazy, Suspense, useEffect, type CSSProperties } from 'react';
+import { AppErrorBoundary } from '../components/AppErrorBoundary';
 import { MiniPlayer } from '../components/MiniPlayer';
-import { QueueDrawer } from '../components/QueueDrawer';
+import { OVERLAY_Z_INDEX, OverlayHostProvider } from '../components/OverlayLayer';
 import { Sidebar } from '../components/Sidebar';
 import { TopHeader } from '../components/TopHeader';
-import { AlbumDetailPage } from '../pages/AlbumDetailPage';
-import { ArtistDetailPage } from '../pages/ArtistDetailPage';
-import { AudioLabPage } from '../pages/AudioLabPage';
 import { HomePage } from '../pages/HomePage';
-import { LibraryPage } from '../pages/LibraryPage';
-import { NowPlayingPage } from '../pages/NowPlayingPage';
-import { PlaylistDetailPage } from '../pages/PlaylistDetailPage';
-import { ProfilePage } from '../pages/ProfilePage';
-import { SearchPage } from '../pages/SearchPage';
-import { SettingsPage } from '../pages/SettingsPage';
-import { StatisticsPage } from '../pages/StatisticsPage';
 import { libraryStore } from '../stores/library-store';
 import { uiStore, useUiState } from '../stores/ui-store';
+import { useForegroundResumeState, useUiAnimationPolicy } from '../utils/animation-policy';
+
+const QueueDrawer = lazy(() =>
+  import('../components/QueueDrawer').then((m) => ({ default: m.QueueDrawer })),
+);
+const AlbumDetailPage = lazy(() =>
+  import('../pages/AlbumDetailPage').then((m) => ({ default: m.AlbumDetailPage })),
+);
+const ArtistDetailPage = lazy(() =>
+  import('../pages/ArtistDetailPage').then((m) => ({ default: m.ArtistDetailPage })),
+);
+const AudioLabPage = lazy(() =>
+  import('../pages/AudioLabPage').then((m) => ({ default: m.AudioLabPage })),
+);
+const LibraryPage = lazy(() =>
+  import('../pages/LibraryPage').then((m) => ({ default: m.LibraryPage })),
+);
+const NowPlayingPage = lazy(() =>
+  import('../pages/NowPlayingPage').then((m) => ({ default: m.NowPlayingPage })),
+);
+const PlaylistDetailPage = lazy(() =>
+  import('../pages/PlaylistDetailPage').then((m) => ({ default: m.PlaylistDetailPage })),
+);
+const ProfilePage = lazy(() =>
+  import('../pages/ProfilePage').then((m) => ({ default: m.ProfilePage })),
+);
+const SearchPage = lazy(() =>
+  import('../pages/SearchPage').then((m) => ({ default: m.SearchPage })),
+);
+const SettingsPage = lazy(() =>
+  import('../pages/SettingsPage').then((m) => ({ default: m.SettingsPage })),
+);
+const StatisticsPage = lazy(() =>
+  import('../pages/StatisticsPage').then((m) => ({ default: m.StatisticsPage })),
+);
 
 export function App() {
   const ui = useUiState();
+  const policy = useUiAnimationPolicy(ui.preferences);
+  useForegroundResumeState();
   const palette = uiStore.getCurrentPalette();
   const userAccent = uiStore.getUserAccentPalette();
   const {
@@ -26,7 +54,6 @@ export function App() {
     homeBackgroundMode,
     customBackgroundUrl,
     backgroundEffects,
-    reducedMotion,
     uiQualityPreset,
   } = ui.preferences;
   const isPowerSaver = uiQualityPreset === 'power-saver';
@@ -48,18 +75,6 @@ export function App() {
     root.dataset.quality = uiQualityPreset ?? 'balanced';
     root.classList.toggle('dark', themeMode === 'dark');
   }, [themeMode, uiQualityPreset]);
-
-  useEffect(() => {
-    if (typeof document === 'undefined') {
-      return;
-    }
-    const syncVisibility = () => {
-      document.documentElement.dataset.appHidden = document.hidden ? 'true' : 'false';
-    };
-    syncVisibility();
-    document.addEventListener('visibilitychange', syncVisibility);
-    return () => document.removeEventListener('visibilitychange', syncVisibility);
-  }, []);
 
   const dynamicCssVars = {
     '--accent-primary': palette.dominant,
@@ -139,79 +154,91 @@ export function App() {
   })();
 
   return (
-    <div
-      style={dynamicCssVars}
-      className={`relative flex h-screen w-screen overflow-hidden bg-[var(--bg-deep)] text-[var(--text-primary)] ${
-        reducedMotion ? 'reduced-motion' : ''
-      }`}
-    >
-      {/* Dynamic / Theme Default Atmospheric Backdrop */}
+    <OverlayHostProvider>
       <div
-        aria-hidden="true"
-        className="lp-ambient-layer pointer-events-none fixed inset-0 z-0"
-        style={{ background: ambientBackground }}
-      />
-
-      {/* Optional Custom Home Background with Contrast-Safe Scrim */}
-      {showCustomHomeBg && customBackgroundUrl && (
-        <div aria-hidden="true" className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
-          <img
-            src={customBackgroundUrl}
-            alt=""
-            decoding="async"
-            className={`h-full w-full object-cover object-center ${
-              isPowerSaver ? '' : 'scale-105 blur-[2px]'
-            }`}
-          />
-          <div
-            className="absolute inset-0"
-            style={{
-              background: isLight
-                ? 'linear-gradient(180deg, rgba(246,247,251,0.72) 0%, rgba(236,238,245,0.82) 100%)'
-                : 'linear-gradient(180deg, rgba(9,10,13,0.62) 0%, rgba(9,10,13,0.78) 100%)',
-            }}
-          />
-        </div>
-      )}
-
-      {/* Fixed 76px Theme-Aware Glass Sidebar */}
-      <Sidebar />
-
-      {/* Main Content Shell */}
-      <div className="relative z-10 flex min-w-0 flex-1 flex-col overflow-hidden">
-        {!isNowPlaying && <TopHeader />}
-
-        <main
-          className={
-            isNowPlaying
-              ? 'flex-1 overflow-hidden'
-              : isHome
-                ? 'flex-1 overflow-y-auto px-6 pt-1 sm:px-9'
-                : 'flex-1 overflow-y-auto px-6 pt-2 sm:px-9'
-          }
-        >
-          {renderActivePage()}
-        </main>
-      </div>
-
-      {/* Floating Pill Mini Player (Hidden in Now Playing fullscreen) */}
-      <MiniPlayer />
-
-      {/* Slide-over Frosted Queue Drawer */}
-      <QueueDrawer />
-
-      {/* Subtle Toast Notification — bottom-center in Now Playing so it never overlaps Info/Lyrics controls */}
-      {ui.toastMessage && (
+        style={dynamicCssVars}
+        className={`relative flex h-screen w-screen overflow-hidden bg-[var(--bg-deep)] text-[var(--text-primary)] ${
+          policy.reducedMotionEffective ? 'reduced-motion' : ''
+        }`}
+      >
+        {/* Dynamic / Theme Default Atmospheric Backdrop */}
         <div
-          role="status"
-          data-testid="app-toast"
-          className={`lp-glass-pill fixed z-50 max-w-[420px] rounded-2xl px-4 py-3 text-[13px] font-medium text-[var(--text-primary)] ${
-            isNowPlaying ? 'bottom-[96px] left-1/2 -translate-x-1/2' : 'top-20 right-8'
-          }`}
-        >
-          {ui.toastMessage}
+          aria-hidden="true"
+          className="lp-ambient-layer pointer-events-none fixed inset-0 z-0"
+          style={{ background: ambientBackground }}
+        />
+
+        {/* Optional Custom Home Background with Contrast-Safe Scrim */}
+        {showCustomHomeBg && customBackgroundUrl && (
+          <div aria-hidden="true" className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
+            <img
+              src={customBackgroundUrl}
+              alt=""
+              decoding="async"
+              className={`h-full w-full object-cover object-center ${
+                isPowerSaver ? '' : 'scale-105 blur-[2px]'
+              }`}
+            />
+            <div
+              className="absolute inset-0"
+              style={{
+                background: isLight
+                  ? 'linear-gradient(180deg, rgba(246,247,251,0.72) 0%, rgba(236,238,245,0.82) 100%)'
+                  : 'linear-gradient(180deg, rgba(9,10,13,0.62) 0%, rgba(9,10,13,0.78) 100%)',
+              }}
+            />
+          </div>
+        )}
+
+        {/* Fixed 76px Theme-Aware Glass Sidebar */}
+        <Sidebar />
+
+        {/* Main Content Shell */}
+        <div className="relative z-10 flex min-w-0 flex-1 flex-col overflow-hidden">
+          {!isNowPlaying && <TopHeader />}
+
+          <main
+            className={
+              isNowPlaying
+                ? 'flex-1 overflow-hidden'
+                : isHome
+                  ? 'flex-1 overflow-y-auto px-6 pt-1 sm:px-9'
+                  : 'flex-1 overflow-y-auto px-6 pt-2 sm:px-9'
+            }
+          >
+            <AppErrorBoundary
+              resetKey={`${ui.route}:${ui.selectedPlaylistId ?? ''}:${ui.selectedAlbumId ?? ''}:${ui.selectedArtistName ?? ''}`}
+              onGoHome={() => uiStore.navigate('home')}
+            >
+              <Suspense fallback={null}>{renderActivePage()}</Suspense>
+            </AppErrorBoundary>
+          </main>
         </div>
-      )}
-    </div>
+
+        {/* Floating Pill Mini Player (Hidden in Now Playing fullscreen) */}
+        <MiniPlayer />
+
+        {/* Slide-over Frosted Queue Drawer (loaded on demand when opened) */}
+        {ui.isQueueOpen && (
+          <Suspense fallback={null}>
+            <QueueDrawer />
+          </Suspense>
+        )}
+
+        {/* Subtle Toast Notification — highest semantic layer so nothing ever occludes it */}
+        {ui.toastMessage && (
+          <div
+            role="status"
+            data-testid="app-toast"
+            style={{ zIndex: OVERLAY_Z_INDEX.toast }}
+            className={`lp-glass-pill fixed max-w-[420px] rounded-2xl px-4 py-3 text-[13px] font-medium text-[var(--text-primary)] ${
+              isNowPlaying ? 'bottom-[96px] left-1/2 -translate-x-1/2' : 'top-20 right-8'
+            }`}
+          >
+            {ui.toastMessage}
+          </div>
+        )}
+      </div>
+    </OverlayHostProvider>
   );
 }

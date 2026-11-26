@@ -1,7 +1,9 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
+const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 const forwardedArgs = process.argv.slice(2);
 
@@ -29,6 +31,16 @@ if (useRendererOnlyPreview) {
     '[Lossless Player] Starting renderer-only UI preview (headless/web preview mode). Run "npm run dev" on Windows desktop for the Electron app.',
   );
 } else {
+  const ensureScript = path.join(moduleDir, 'ensure-electron.mjs');
+  const ensureResult = spawnSync(process.execPath, [ensureScript], {
+    stdio: 'inherit',
+    env: process.env,
+    windowsHide: true,
+  });
+  if (ensureResult.status !== 0) {
+    console.error('[Lossless Player] Electron runtime verification failed. Aborting desktop dev launch.');
+    process.exit(ensureResult.status ?? 1);
+  }
   const electronVitePkgDir = path.dirname(require.resolve('electron-vite/package.json'));
   binPath = path.join(electronVitePkgDir, 'bin', 'electron-vite.js');
   childArgs = ['dev', ...forwardedArgs];

@@ -1,5 +1,6 @@
 export const IPC_CHANNELS = {
   APP_GET_INFO: 'app:get-info',
+  APP_PROBE_CODECS: 'app:probe-codecs',
   LIBRARY_GET_SNAPSHOT: 'library:get-snapshot',
   LIBRARY_IMPORT_FILES: 'library:import-files',
   LIBRARY_IMPORT_FOLDER: 'library:import-folder',
@@ -43,6 +44,7 @@ export const IPC_CHANNELS = {
   APP_OPEN_EXTERNAL_FILES: 'app:open-external-files',
   APP_CONSUME_EXTERNAL_FILES: 'app:consume-external-files',
   APP_GET_DIAGNOSTICS: 'app:get-diagnostics',
+  APP_RECORD_DIAGNOSTIC: 'app:record-diagnostic',
   // Phase 8: Clean Release, Library Track Removal, Exclusions, Watched Folders & Optional Recycle Bin
   LIBRARY_REMOVE_TRACKS: 'library:remove-tracks',
   LIBRARY_TRASH_TRACK_FILES: 'library:trash-track-files',
@@ -54,6 +56,22 @@ export const IPC_CHANNELS = {
   LIBRARY_LIST_EXCLUSIONS: 'library:list-exclusions',
   LIBRARY_REIMPORT_EXCLUSIONS: 'library:reimport-exclusions',
   LIBRARY_CLEAR_EXCLUSIONS: 'library:clear-exclusions',
+  // Phase 3: SQLite Playlists, Favorites, Smart Rescan Cancel, Folder Management & Single/Folder Relink
+  LIBRARY_CANCEL_RESCAN: 'library:cancel-rescan',
+  LIBRARY_UPDATE_ROOT_SETTINGS: 'library:update-root-settings',
+  RELINK_SINGLE_TRACK_DIALOG: 'relink:single-track-dialog',
+  PLAYLIST_GET_SNAPSHOT: 'playlist:get-snapshot',
+  PLAYLIST_CREATE: 'playlist:create',
+  PLAYLIST_UPDATE: 'playlist:update',
+  PLAYLIST_DELETE: 'playlist:delete',
+  PLAYLIST_ADD_TRACKS: 'playlist:add-tracks',
+  PLAYLIST_REMOVE_ENTRIES: 'playlist:remove-entries',
+  PLAYLIST_REORDER_ENTRIES: 'playlist:reorder-entries',
+  PLAYLIST_IMPORT_ARTWORK: 'playlist:import-artwork',
+  PLAYLIST_REMOVE_ARTWORK: 'playlist:remove-artwork',
+  PLAYLIST_MIGRATE_LEGACY: 'playlist:migrate-legacy',
+  FAVORITE_TOGGLE: 'favorite:toggle',
+  FAVORITE_SET_MANY: 'favorite:set-many',
   // Native Audio Codec Engine, Default Encoder Pack, Converter, Analyzer & Update Manager
   CODEC_GET_INVENTORY: 'codec:get-inventory',
   CODEC_RESCAN: 'codec:rescan',

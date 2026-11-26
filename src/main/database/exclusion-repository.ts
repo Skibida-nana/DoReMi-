@@ -246,4 +246,10 @@ export class ExclusionRepository {
   clearAll(): number {
     return this.stmtClearAll.run().changes;
   }
+
+  deleteByRootId(rootId: string): number {
+    return this.db
+      .prepare('DELETE FROM library_exclusions WHERE root_id = ?')
+      .run(rootId).changes;
+  }
 }

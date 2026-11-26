@@ -166,11 +166,11 @@ export function HomeEditorialTypography({
       }}
     >
       {/* Upper-half editorial display line */}
-      <div className="flex w-full items-start justify-center overflow-hidden">
+      <div className="flex w-full items-start justify-center overflow-x-hidden overflow-y-visible py-1">
         {topLine && (
           <span
             data-testid={isPreview ? 'editorial-preview-top' : 'home-editorial-top-text'}
-            className="block max-w-full whitespace-nowrap text-center font-extrabold"
+            className="block max-w-full whitespace-nowrap text-center font-bold"
             style={{
               fontFamily: fontStack,
               fontSize: `${topPx}px`,
@@ -185,11 +185,11 @@ export function HomeEditorialTypography({
       </div>
 
       {/* Lower-half editorial display line */}
-      <div className="flex w-full items-end justify-center overflow-hidden">
+      <div className="flex w-full items-end justify-center overflow-x-hidden overflow-y-visible py-1">
         {bottomLine && (
           <span
             data-testid={isPreview ? 'editorial-preview-bottom' : 'home-editorial-bottom-text'}
-            className="block max-w-full whitespace-nowrap text-center font-extrabold"
+            className="block max-w-full whitespace-nowrap text-center font-bold"
             style={{
               fontFamily: fontStack,
               fontSize: `${bottomPx}px`,

@@ -4,7 +4,7 @@ import { defineConfig } from 'electron-vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const configDirname = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   main: {
@@ -13,13 +13,13 @@ export default defineConfig({
       externalizeDeps: true,
       rollupOptions: {
         input: {
-          index: path.resolve(__dirname, 'src/main/index.ts'),
+          index: path.resolve(configDirname, 'src/main/index.ts'),
         },
       },
     },
     resolve: {
       alias: {
-        '@shared': path.resolve(__dirname, 'src/shared'),
+        '@shared': path.resolve(configDirname, 'src/shared'),
       },
     },
   },
@@ -31,7 +31,7 @@ export default defineConfig({
       isolatedEntries: true,
       rollupOptions: {
         input: {
-          index: path.resolve(__dirname, 'src/preload/index.ts'),
+          index: path.resolve(configDirname, 'src/preload/index.ts'),
         },
         output: {
           format: 'cjs',
@@ -41,24 +41,24 @@ export default defineConfig({
     },
     resolve: {
       alias: {
-        '@shared': path.resolve(__dirname, 'src/shared'),
+        '@shared': path.resolve(configDirname, 'src/shared'),
       },
     },
   },
   renderer: {
-    root: path.resolve(__dirname, 'src/renderer'),
+    root: path.resolve(configDirname, 'src/renderer'),
     build: {
-      outDir: path.resolve(__dirname, 'out/renderer'),
+      outDir: path.resolve(configDirname, 'out/renderer'),
       rollupOptions: {
         input: {
-          index: path.resolve(__dirname, 'src/renderer/index.html'),
+          index: path.resolve(configDirname, 'src/renderer/index.html'),
         },
       },
     },
     resolve: {
       alias: {
-        '@shared': path.resolve(__dirname, 'src/shared'),
-        '@renderer': path.resolve(__dirname, 'src/renderer/src'),
+        '@shared': path.resolve(configDirname, 'src/shared'),
+        '@renderer': path.resolve(configDirname, 'src/renderer/src'),
       },
     },
     plugins: [react(), tailwindcss()],

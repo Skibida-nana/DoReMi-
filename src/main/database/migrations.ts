@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { CONFIRMED_DEMO_TRACK_IDS } from '../../shared/utils/demo-cleanup';
 
 export interface MigrationDefinition {
   version: number;
@@ -221,6 +222,228 @@ export const MIGRATIONS: readonly MigrationDefinition[] = [
           ON library_exclusions(normalized_path);
         CREATE INDEX IF NOT EXISTS idx_library_exclusions_root
           ON library_exclusions(root_id);
+      `);
+    },
+  },
+  {
+    version: 6,
+    name: '006_phase3_library_sources_availability_metadata',
+    up(db: Database.Database): void {
+      const trackCols = new Set(
+        (db.prepare('PRAGMA table_info(tracks)').all() as Array<{ name: string }>).map(
+          (c) => c.name,
+        ),
+      );
+      const trackAlterStatements: Array<[string, string]> = [
+        ['genre', 'ALTER TABLE tracks ADD COLUMN genre TEXT;'],
+        ['album_artist', 'ALTER TABLE tracks ADD COLUMN album_artist TEXT;'],
+        ['track_number', 'ALTER TABLE tracks ADD COLUMN track_number INTEGER;'],
+        ['track_total', 'ALTER TABLE tracks ADD COLUMN track_total INTEGER;'],
+        ['disc_number', 'ALTER TABLE tracks ADD COLUMN disc_number INTEGER;'],
+        ['disc_total', 'ALTER TABLE tracks ADD COLUMN disc_total INTEGER;'],
+        ['composer', 'ALTER TABLE tracks ADD COLUMN composer TEXT;'],
+        ['lyricist', 'ALTER TABLE tracks ADD COLUMN lyricist TEXT;'],
+        ['comment', 'ALTER TABLE tracks ADD COLUMN comment TEXT;'],
+        ['channels', 'ALTER TABLE tracks ADD COLUMN channels INTEGER;'],
+        ['encoder', 'ALTER TABLE tracks ADD COLUMN encoder TEXT;'],
+        ['file_name', 'ALTER TABLE tracks ADD COLUMN file_name TEXT;'],
+        [
+          'availability_state',
+          "ALTER TABLE tracks ADD COLUMN availability_state TEXT NOT NULL DEFAULT 'available';",
+        ],
+        ['availability_reason', 'ALTER TABLE tracks ADD COLUMN availability_reason TEXT;'],
+        ['last_verified_at', 'ALTER TABLE tracks ADD COLUMN last_verified_at TEXT;'],
+      ];
+      for (const [col, sql] of trackAlterStatements) {
+        if (!trackCols.has(col)) {
+          db.exec(sql);
+        }
+      }
+
+      db.exec(`
+        UPDATE tracks
+        SET availability_state = CASE
+          WHEN status = 'error' THEN 'access_error'
+          WHEN status = 'missing' THEN 'missing'
+          ELSE 'available'
+        END
+        WHERE availability_state IS NULL OR availability_state = 'available';
+
+        CREATE INDEX IF NOT EXISTS idx_tracks_availability_state
+          ON tracks(availability_state);
+        CREATE INDEX IF NOT EXISTS idx_tracks_album_artist
+          ON tracks(album_artist);
+      `);
+
+      const overrideCols = new Set(
+        (
+          db
+            .prepare('PRAGMA table_info(track_metadata_overrides)')
+            .all() as Array<{ name: string }>
+        ).map((c) => c.name),
+      );
+      const overrideAlterStatements: Array<[string, string]> = [
+        ['genre_override', 'ALTER TABLE track_metadata_overrides ADD COLUMN genre_override TEXT;'],
+        [
+          'year_override',
+          'ALTER TABLE track_metadata_overrides ADD COLUMN year_override INTEGER;',
+        ],
+        [
+          'album_artist_override',
+          'ALTER TABLE track_metadata_overrides ADD COLUMN album_artist_override TEXT;',
+        ],
+        [
+          'track_number_override',
+          'ALTER TABLE track_metadata_overrides ADD COLUMN track_number_override INTEGER;',
+        ],
+        [
+          'track_total_override',
+          'ALTER TABLE track_metadata_overrides ADD COLUMN track_total_override INTEGER;',
+        ],
+        [
+          'disc_number_override',
+          'ALTER TABLE track_metadata_overrides ADD COLUMN disc_number_override INTEGER;',
+        ],
+        [
+          'disc_total_override',
+          'ALTER TABLE track_metadata_overrides ADD COLUMN disc_total_override INTEGER;',
+        ],
+        [
+          'composer_override',
+          'ALTER TABLE track_metadata_overrides ADD COLUMN composer_override TEXT;',
+        ],
+        [
+          'lyricist_override',
+          'ALTER TABLE track_metadata_overrides ADD COLUMN lyricist_override TEXT;',
+        ],
+        [
+          'comment_override',
+          'ALTER TABLE track_metadata_overrides ADD COLUMN comment_override TEXT;',
+        ],
+      ];
+      for (const [col, sql] of overrideAlterStatements) {
+        if (!overrideCols.has(col)) {
+          db.exec(sql);
+        }
+      }
+
+      const rootCols = new Set(
+        (db.prepare('PRAGMA table_info(library_roots)').all() as Array<{ name: string }>).map(
+          (c) => c.name,
+        ),
+      );
+      const rootAlterStatements: Array<[string, string]> = [
+        ['recursive', 'ALTER TABLE library_roots ADD COLUMN recursive INTEGER NOT NULL DEFAULT 1;'],
+        ['enabled', 'ALTER TABLE library_roots ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;'],
+        [
+          'availability_state',
+          "ALTER TABLE library_roots ADD COLUMN availability_state TEXT NOT NULL DEFAULT 'available';",
+        ],
+        [
+          'availability_reason',
+          'ALTER TABLE library_roots ADD COLUMN availability_reason TEXT;',
+        ],
+        [
+          'last_successful_scan_at',
+          'ALTER TABLE library_roots ADD COLUMN last_successful_scan_at TEXT;',
+        ],
+      ];
+      for (const [col, sql] of rootAlterStatements) {
+        if (!rootCols.has(col)) {
+          db.exec(sql);
+        }
+      }
+
+      db.exec(`
+        UPDATE library_roots
+        SET
+          availability_state = CASE
+            WHEN status = 'missing' THEN 'source_unavailable'
+            ELSE 'available'
+          END,
+          last_successful_scan_at = COALESCE(last_successful_scan_at, last_scanned_at);
+      `);
+    },
+  },
+  {
+    version: 7,
+    name: '007_phase3_playlists_favorites_and_demo_cleanup',
+    up(db: Database.Database): void {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS playlists (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          description TEXT NOT NULL DEFAULT '',
+          custom_artwork_file TEXT,
+          custom_artwork_mime TEXT,
+          custom_artwork_hash TEXT,
+          sort_order INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_playlists_sort_order
+          ON playlists(sort_order, updated_at);
+
+        CREATE TABLE IF NOT EXISTS playlist_tracks (
+          id TEXT PRIMARY KEY,
+          playlist_id TEXT NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
+          track_id TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+          position INTEGER NOT NULL,
+          added_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_playlist_tracks_playlist_pos
+          ON playlist_tracks(playlist_id, position);
+        CREATE INDEX IF NOT EXISTS idx_playlist_tracks_track
+          ON playlist_tracks(track_id);
+
+        CREATE TABLE IF NOT EXISTS favorites (
+          track_id TEXT PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,
+          added_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_favorites_added_at
+          ON favorites(added_at);
+      `);
+
+      // Safe idempotent cleanup of strictly confirmed prototype demo records if any leaked into SQLite
+      const placeholders = CONFIRMED_DEMO_TRACK_IDS.map(() => '?').join(', ');
+      if (placeholders.length > 0) {
+        db.prepare(
+          `DELETE FROM tracks WHERE id IN (${placeholders}) OR original_path LIKE 'sample://%'`,
+        ).run(...CONFIRMED_DEMO_TRACK_IDS);
+        db.prepare(
+          `DELETE FROM listening_sessions WHERE track_id IN (${placeholders})`,
+        ).run(...CONFIRMED_DEMO_TRACK_IDS);
+      }
+    },
+  },
+  {
+    version: 8,
+    name: '008_phase451_track_metadata_version',
+    up(db: Database.Database): void {
+      const trackCols = new Set(
+        (db.prepare('PRAGMA table_info(tracks)').all() as Array<{ name: string }>).map(
+          (c) => c.name,
+        ),
+      );
+      if (!trackCols.has('metadata_version')) {
+        db.exec('ALTER TABLE tracks ADD COLUMN metadata_version INTEGER NOT NULL DEFAULT 1;');
+      }
+      // Confirmed non-M4A/MP4/ALAC/AAC tracks were unaffected by the MP4 ALAC sample-rate bug;
+      // keep M4A/MP4/ALAC/AAC/unknown tracks at version 1 so selective recovery re-reads ONLY their headers.
+      db.exec(`
+        UPDATE tracks
+        SET metadata_version = 2
+        WHERE LOWER(COALESCE(original_path, '')) NOT LIKE '%.m4a'
+          AND LOWER(COALESCE(original_path, '')) NOT LIKE '%.mp4'
+          AND UPPER(COALESCE(container, '')) NOT IN ('M4A', 'MP4', 'ISOM', 'QUICKTIME')
+          AND UPPER(COALESCE(codec, '')) NOT IN ('ALAC', 'AAC', 'MP4A')
+          AND COALESCE(codec, '') <> '';
+
+        CREATE INDEX IF NOT EXISTS idx_tracks_metadata_version
+          ON tracks(metadata_version);
       `);
     },
   },

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   getActiveLyricIndex,
   getCircularGallerySlots,
+  matchesNormalizedVietnameseQuery,
   matchesVietnameseQuery,
   normalizeVietnameseText,
 } from '../src/renderer/src/utils/vietnamese-search';
@@ -39,5 +40,20 @@ describe('vietnamese-search and gallery pure helpers', () => {
     assert.deepEqual(getCircularGallerySlots(7, 0), [4, 5, 6, 0, 1, 2, 3]);
     assert.deepEqual(getCircularGallerySlots(7, 3), [0, 1, 2, 3, 4, 5, 6]);
     assert.deepEqual(getCircularGallerySlots(7, 6), [3, 4, 5, 6, 0, 1, 2]);
+  });
+
+  it('Phase 5.1E: binary-search lyric lookup handles duplicate timestamps and normalized queries consistently', () => {
+    const dupLines = [
+      { timeSec: 10, text: 'JP line' },
+      { timeSec: 10, text: 'EN line' },
+      { timeSec: 20, text: 'Next' },
+    ];
+    assert.equal(getActiveLyricIndex(dupLines, 10), 1);
+    assert.equal(getActiveLyricIndex(dupLines, 19.9), 1);
+    assert.equal(getActiveLyricIndex(dupLines, 20), 2);
+
+    const normQ = normalizeVietnameseText('Đêm Hà Nội');
+    assert.equal(matchesNormalizedVietnameseQuery('Đêm Hà Nội Mùa Thu', normQ), true);
+    assert.equal(matchesNormalizedVietnameseQuery('ヨルシカ', normalizeVietnameseText('ヨル')), true);
   });
 });

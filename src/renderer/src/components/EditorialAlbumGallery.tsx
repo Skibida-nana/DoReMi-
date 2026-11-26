@@ -8,7 +8,6 @@ import {
   Play,
   Shuffle,
 } from 'lucide-react';
-import { PROTOTYPE_ALBUMS } from '../data/prototype-catalog';
 import { uiStore, useUiState } from '../stores/ui-store';
 import { getCircularGallerySlots } from '../utils/vietnamese-search';
 
@@ -46,14 +45,19 @@ const GALLERY_SLOTS: SlotGeometry[] = [
 
 export function EditorialAlbumGallery() {
   const ui = useUiState();
-  const selectedAlbum = uiStore.getSelectedGalleryAlbum();
+  const albums = uiStore.getDerivedAlbums();
+  const selectedAlbum = uiStore.getSelectedGalleryAlbum() ?? albums[0] ?? null;
   const palette = uiStore.getCurrentPalette();
   const slotAlbumIndices = getCircularGallerySlots(
-    PROTOTYPE_ALBUMS.length,
+    albums.length,
     ui.selectedGalleryIndex,
   );
-  const selectedTrackCount = uiStore.getAlbumTrackCount(selectedAlbum.id);
-  const isSelectedFavorite = ui.favoriteIds.includes(selectedAlbum.id);
+  const selectedTrackCount = selectedAlbum ? uiStore.getAlbumTrackCount(selectedAlbum.id) : 0;
+  const isSelectedFavorite = selectedAlbum ? ui.favoriteIds.includes(selectedAlbum.id) : false;
+
+  if (albums.length === 0 || !selectedAlbum) {
+    return null;
+  }
 
   // Keyboard navigation (ArrowLeft / ArrowRight) on Home screen
   useEffect(() => {
@@ -104,7 +108,7 @@ export function EditorialAlbumGallery() {
           className="pointer-events-none absolute inset-0 z-0 flex flex-col items-center justify-between px-6 py-7 select-none"
         >
           <span
-            className="font-display whitespace-nowrap text-center text-[78px] font-bold leading-[0.92] tracking-[-0.04em] uppercase transition-colors duration-700 lg:text-[106px] xl:text-[118px]"
+            className="font-display whitespace-nowrap text-center text-[78px] font-bold leading-[1.06] tracking-[-0.03em] uppercase transition-colors duration-700 lg:text-[106px] xl:text-[118px]"
             style={{
               backgroundImage: `linear-gradient(180deg, rgba(255,255,255,0.16) 0%, rgba(${palette.glowRgb}, 0.16) 100%)`,
               WebkitBackgroundClip: 'text',
@@ -114,7 +118,7 @@ export function EditorialAlbumGallery() {
             YOUR MUSIC
           </span>
           <span
-            className="font-display whitespace-nowrap text-center text-[78px] font-bold leading-[0.92] tracking-[-0.04em] uppercase transition-colors duration-700 lg:text-[106px] xl:text-[118px]"
+            className="font-display whitespace-nowrap text-center text-[78px] font-bold leading-[1.06] tracking-[-0.03em] uppercase transition-colors duration-700 lg:text-[106px] xl:text-[118px]"
             style={{
               backgroundImage: `linear-gradient(180deg, rgba(${palette.glowRgb}, 0.15) 0%, rgba(255,255,255,0.08) 100%)`,
               WebkitBackgroundClip: 'text',
@@ -146,7 +150,7 @@ export function EditorialAlbumGallery() {
 
         {/* 7 Staggered Portrait Album Cards (stable DOM keys by album.id for smooth 450ms reposition) */}
         <div className="relative z-10 h-full w-full">
-          {PROTOTYPE_ALBUMS.map((album, albumIdx) => {
+          {albums.map((album, albumIdx) => {
             const slotIdx = slotByAlbumIndex.get(albumIdx) ?? 3;
             const slot = GALLERY_SLOTS[slotIdx];
             const isCenter = slotIdx === 3;
@@ -278,7 +282,7 @@ export function EditorialAlbumGallery() {
 
         {/* Subtle bottom-center album selector indicator dots */}
         <div className="absolute bottom-3.5 left-1/2 z-20 flex -translate-x-1/2 items-center gap-1.5">
-          {PROTOTYPE_ALBUMS.map((album, idx) => {
+          {albums.map((album, idx) => {
             const active = idx === ui.selectedGalleryIndex;
             return (
               <button

@@ -158,9 +158,12 @@ export interface RelinkTrackProposal {
   album: string | null;
   previousPath: string;
   durationMs: number | null;
-  matchStatus: 'matched' | 'ambiguous' | 'unmatched';
+  matchStatus: 'matched' | 'ambiguous' | 'unmatched' | 'conflict';
   /** Automatically suggested file path only when matchStatus === 'matched' (high-confidence unique match) */
   suggestedPath: string | null;
+  conflictTrackId?: string;
+  conflictTrackTitle?: string;
+  conflictReason?: string;
   candidates: RelinkFileCandidate[];
 }
 
@@ -171,6 +174,7 @@ export interface RelinkScanResult {
   matchedCount: number;
   ambiguousCount: number;
   unmatchedCount: number;
+  conflictCount?: number;
   proposals: RelinkTrackProposal[];
   error?: string;
 }
@@ -191,4 +195,19 @@ export interface DiagnosticLogEntry {
   level: 'info' | 'warn' | 'error';
   scope: string;
   message: string;
+  sessionId?: string;
+  code?: string;
+  stage?: string;
+  attemptId?: string;
+  detail?: string;
+}
+
+export interface DiagnosticRecordInput {
+  level: 'info' | 'warn' | 'error';
+  scope: string;
+  message: string;
+  code?: string;
+  stage?: string;
+  attemptId?: string;
+  detail?: string;
 }

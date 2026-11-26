@@ -45,10 +45,11 @@
     --np-text-secondary: #A2A4AA;
     --np-text-muted: #72757E;
 
-    /* Offline Windows CJK + Vietnamese + Latin font stack */
-    --font-display: 'Poppins', 'Segoe UI Variable Display', 'Segoe UI', 'Microsoft YaHei UI', 'Microsoft JhengHei UI', 'Yu Gothic UI', 'Meiryo', 'Malgun Gothic', system-ui, sans-serif;
-    --font-sans: 'Poppins', 'Segoe UI Variable Text', 'Segoe UI', 'Microsoft YaHei UI', 'Microsoft JhengHei UI', 'Yu Gothic UI', 'Meiryo', 'Malgun Gothic', system-ui, -apple-system, sans-serif;
-    --font-mono: 'Cascadia Mono', 'JetBrains Mono', 'Consolas', ui-monospace, SFMono-Regular, monospace;
+    /* Offline Windows Full-Unicode Vietnamese + CJK + Latin Font Stack (zero mixed mid-word fallback) */
+    --font-display: 'Segoe UI Variable Display', 'Segoe UI Variable', 'Segoe UI', 'Microsoft YaHei UI', 'Microsoft JhengHei UI', 'Yu Gothic UI', 'Meiryo', 'Malgun Gothic', system-ui, sans-serif;
+    --font-sans: 'Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI', 'Microsoft YaHei UI', 'Microsoft JhengHei UI', 'Yu Gothic UI', 'Meiryo', 'Malgun Gothic', system-ui, -apple-system, sans-serif;
+    --font-lyrics: 'Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI', 'Microsoft YaHei UI', 'Microsoft JhengHei UI', 'Yu Gothic UI', 'Meiryo', 'Malgun Gothic', system-ui, sans-serif;
+    --font-mono: 'Cascadia Mono', 'Cascadia Code', 'Consolas', ui-monospace, SFMono-Regular, monospace;
   }
 
   :root[data-theme='light'] {
@@ -104,6 +105,11 @@
 
 .font-display {
   font-family: var(--font-display);
+  font-feature-settings: 'kern' 1, 'liga' 1;
+}
+
+.font-lyrics {
+  font-family: var(--font-lyrics);
 }
 
 .font-mono-tabular {
@@ -113,6 +119,35 @@
 
 .tabular-nums {
   font-variant-numeric: tabular-nums;
+}
+
+/* Global Dark / Light Mode Form Controls & Native <select> Contrast Fix */
+:root[data-theme='dark'] select,
+:root[data-theme='dark'] select.lp-surface-input {
+  color-scheme: dark;
+  background-color: var(--bg-elevated);
+  color: var(--text-primary);
+  border-color: var(--border-glass);
+}
+
+:root[data-theme='light'] select,
+:root[data-theme='light'] select.lp-surface-input {
+  color-scheme: light;
+  background-color: var(--bg-elevated);
+  color: var(--text-primary);
+  border-color: var(--border-glass);
+}
+
+select option,
+select optgroup {
+  background-color: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+select:focus-visible,
+.lp-surface-input:focus-visible {
+  outline: 2px solid rgba(var(--user-accent-rgb), 0.72);
+  outline-offset: 2px;
 }
 
 /* Semantic theme-aware utility surfaces */
@@ -202,14 +237,15 @@
   border-color: var(--border-glass);
 }
 
-/* Multilingual / CJK-safe lyrics rendering */
+/* Multilingual / Vietnamese / CJK-safe lyrics rendering */
 .lp-lyrics-text {
-  font-family: var(--font-sans);
-  line-height: 1.74;
+  font-family: var(--font-lyrics);
+  line-height: 1.72;
   letter-spacing: 0;
   overflow-wrap: anywhere;
   word-break: normal;
   text-wrap: pretty;
+  font-kerning: normal;
 }
 
 /* Editorial background glow transition */
@@ -256,8 +292,18 @@
 
 /* Pause decorative CSS animations automatically when Electron window is hidden/minimized */
 :root[data-app-hidden='true'] .lp-vinyl-rotor,
-:root[data-app-hidden='true'] .lp-vinyl-spinning {
+:root[data-app-hidden='true'] .lp-vinyl-spinning,
+:root[data-app-hidden='true'] .lp-ambient-layer {
   animation-play-state: paused !important;
+  transition: none !important;
+}
+
+/* Phase 4.3C: Single-frame transition suppression immediately upon foreground resume so
+   stale progress rings/arcs, tonearm, lyric slots, horizontal bar & mode containers
+   snap cleanly to latest state with ZERO backward-to-forward jump or animation replay */
+:root[data-resume-sync='true'] .lp-resume-snap-target,
+:root[data-resume-sync='true'] .lp-resume-snap-target * {
+  transition: none !important;
 }
 
 @media (prefers-reduced-motion: reduce) {

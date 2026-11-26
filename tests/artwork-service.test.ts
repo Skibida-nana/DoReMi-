@@ -179,3 +179,80 @@ test('M3.1 + M3.2: Artwork priority (Custom > Embedded > Folder > Default), pers
     fs.rmSync(rootDir, { recursive: true, force: true });
   }
 });
+
+test('Phase 5.1C: pruneOrphanedMediaFiles removes unreferenced artwork files while keeping shared covers', async () => {
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doremi-artwork-prune-'));
+  const userDataDir = path.join(rootDir, 'userData');
+  const dbPath = path.join(userDataDir, 'library.db');
+  const musicDir = path.join(rootDir, 'music');
+
+  try {
+    const sharedCover = createValidPngBuffer(0x21);
+    const uniqueCover = createValidPngBuffer(0x79);
+    const shared1 = writeFixtureFile(
+      path.join(musicDir, 'shared', '01.flac'),
+      createFlacMetadataBuffer({
+        title: 'Shared 1',
+        artist: 'Artist',
+        picture: { mime: 'image/png', data: sharedCover },
+      }),
+    );
+    const shared2 = writeFixtureFile(
+      path.join(musicDir, 'shared', '02.flac'),
+      createFlacMetadataBuffer({
+        title: 'Shared 2',
+        artist: 'Artist',
+        picture: { mime: 'image/png', data: sharedCover },
+      }),
+    );
+    const isolated = writeFixtureFile(
+      path.join(musicDir, 'isolated', '03.flac'),
+      createFlacMetadataBuffer({
+        title: 'Isolated 3',
+        artist: 'Artist',
+        picture: { mime: 'image/png', data: uniqueCover },
+      }),
+    );
+
+    const conn = openLibraryDatabase(dbPath);
+    try {
+      const trackRepo = new TrackRepository(conn.db);
+      const rootRepo = new LibraryRootRepository(conn.db);
+      const artworkRepo = new ArtworkRepository(conn.db);
+      const artworkService = new ArtworkService({ trackRepo, artworkRepo, userDataDir });
+      const libraryService = new LibraryService({
+        trackRepo,
+        rootRepo,
+        databasePath: dbPath,
+        artworkService,
+      });
+
+      await libraryService.importFiles([shared1, shared2, isolated]);
+      const snap = libraryService.getSnapshot();
+      const sharedTrack1 = snap.tracks.find((t) => t.title === 'Shared 1')!;
+      const isolatedTrack = snap.tracks.find((t) => t.title === 'Isolated 3')!;
+
+      const cacheDir = path.join(userDataDir, 'artwork-cache');
+      assert.equal(fs.readdirSync(cacheDir).length, 2);
+
+      // Remove one shared track + isolated track; shared hash must stay, isolated hash must be pruned
+      trackRepo.deleteByIds([sharedTrack1.id, isolatedTrack.id]);
+      const pruned = await artworkService.pruneOrphanedMediaFiles();
+      assert.ok(pruned.removedCount >= 1);
+      assert.equal(fs.readdirSync(cacheDir).length, 1);
+
+      const remainingSnap = libraryService.getSnapshot();
+      assert.equal(remainingSnap.tracks.length, 1);
+      assert.equal(remainingSnap.tracks[0].artwork_source, 'embedded');
+      assert.ok(remainingSnap.tracks[0].artwork_url);
+      const res = await artworkService.resolveArtworkHttpResponse(
+        new Request(remainingSnap.tracks[0].artwork_url),
+      );
+      assert.equal(res.status, 200);
+    } finally {
+      conn.close();
+    }
+  } finally {
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  }
+});

@@ -1,12 +1,18 @@
-import { useRef, useState, type ChangeEvent } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import {
+  AlertTriangle,
+  ArrowDown,
   ArrowLeft,
+  ArrowUp,
   Check,
   Disc3,
+  GripVertical,
   ImagePlus,
   Pencil,
   Play,
   Plus,
+  RotateCcw,
+  Search,
   Shuffle,
   Trash2,
   X,
@@ -14,6 +20,10 @@ import {
 import { libraryStore } from '../stores/library-store';
 import { uiStore, useUiState } from '../stores/ui-store';
 import { formatDurationSeconds } from '../utils/formatters';
+import { naturalCompare } from '../../../shared/utils/natural-sort';
+import { matchesVietnameseQuery } from '../utils/vietnamese-search';
+
+type PlaylistViewSort = 'custom' | 'title' | 'artist' | 'album' | 'duration';
 
 function fileToDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -24,58 +34,148 @@ function fileToDataUrl(file: File): Promise<string> {
   });
 }
 
-/**
- * M5.4 Playlist Detail Screen
- * Reached when clicking the centered playlist card on Home or any playlist in Library.
- */
 export function PlaylistDetailPage() {
   const ui = useUiState();
   const userAccent = uiStore.getUserAccentPalette();
-  const playlist =
-    ui.playlists.find((p) => p.id === ui.selectedPlaylistId) ?? ui.playlists[0] ?? null;
+  const playlist = ui.selectedPlaylistId
+    ? ui.playlists.find((p) => p.id === ui.selectedPlaylistId) ?? null
+    : null;
 
   const [isEditing, setIsEditing] = useState(false);
   const [nameDraft, setNameDraft] = useState(playlist?.name ?? '');
   const [descDraft, setDescDraft] = useState(playlist?.description ?? '');
   const [showAddTracks, setShowAddTracks] = useState(false);
+  const [addSearch, setAddSearch] = useState('');
+  const [addAlbumFilter, setAddAlbumFilter] = useState('all');
+  const [allowDuplicateAdd, setAllowDuplicateAdd] = useState(false);
+  const [selectedAddIds, setSelectedAddIds] = useState<Set<string>>(new Set());
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [viewSort, setViewSort] = useState<PlaylistViewSort>('custom');
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedEntryIds, setSelectedEntryIds] = useState<Set<string>>(new Set());
+  const [dragIdx, setDragIdx] = useState<number | null>(null);
   const coverInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (playlist) {
+      setNameDraft(playlist.name);
+      setDescDraft(playlist.description);
+    }
+    setConfirmDelete(false);
+    setSelectedEntryIds(new Set());
+    setSelectedAddIds(new Set());
+  }, [playlist?.id]);
 
   if (!playlist) {
     return (
-      <div className="mx-auto max-w-2xl py-20 text-center">
+      <div data-testid="playlist-missing-page" className="mx-auto max-w-2xl py-20 text-center">
         <p className="text-[15px] text-[var(--text-secondary)]">
-          Playlist này không còn tồn tại.
+          Playlist này không còn tồn tại hoặc đã được xóa.
         </p>
-        <button
-          type="button"
-          onClick={() => uiStore.navigate('home')}
-          className="lp-btn-ghost mt-4 rounded-full px-5 py-2 text-[13px] font-medium"
-        >
-          Quay lại Trang chủ
-        </button>
+        <div className="mt-5 flex flex-wrap justify-center gap-2.5">
+          <button
+            type="button"
+            onClick={() => uiStore.openLibraryTab('playlists')}
+            className="lp-btn-ghost rounded-full px-5 py-2 text-[13px] font-medium"
+          >
+            Xem danh sách Playlist
+          </button>
+          <button
+            type="button"
+            onClick={() => uiStore.navigate('home')}
+            className="lp-btn-ghost rounded-full px-5 py-2 text-[13px] font-medium"
+          >
+            Quay lại Trang chủ
+          </button>
+        </div>
       </div>
     );
   }
 
   const allTracks = uiStore.getUnifiedTracks();
-  const playlistTracks = playlist.trackIds
-    .map((id) => allTracks.find((t) => t.id === id))
-    .filter((t): t is NonNullable<typeof t> => Boolean(t));
+  const trackMap = new Map(allTracks.map((t) => [t.id, t]));
 
-  const addableTracks = allTracks.filter((t) => !playlist.trackIds.includes(t.id));
-  const totalSec = playlistTracks.reduce((sum, t) => sum + t.durationSec, 0);
+  const canonicalItems = (
+    playlist.entries && playlist.entries.length > 0
+      ? playlist.entries.map((e, i) => ({
+          entryId: e.entryId,
+          trackId: e.trackId,
+          position: i,
+          track: trackMap.get(e.trackId) ?? null,
+        }))
+      : playlist.trackIds.map((trackId, i) => ({
+          entryId: `legacy-${i}-${trackId}`,
+          trackId,
+          position: i,
+          track: trackMap.get(trackId) ?? null,
+        }))
+  ).filter((item): item is typeof item & { track: NonNullable<typeof item.track> } =>
+    Boolean(item.track),
+  );
+
+  const displayedItems =
+    viewSort === 'custom'
+      ? canonicalItems
+      : [...canonicalItems].sort((a, b) => {
+          if (viewSort === 'title') {
+            return naturalCompare(a.track.title, b.track.title);
+          }
+          if (viewSort === 'artist') {
+            return naturalCompare(a.track.artist, b.track.artist);
+          }
+          if (viewSort === 'album') {
+            return naturalCompare(a.track.albumTitle, b.track.albumTitle);
+          }
+          return b.track.durationSec - a.track.durationSec;
+        });
+
+  const existingIdSet = new Set(playlist.trackIds);
+  const albumOptions = Array.from(new Set(allTracks.map((t) => t.albumTitle))).sort(naturalCompare);
+  const addableTracks = allTracks.filter((t) => {
+    if (!allowDuplicateAdd && existingIdSet.has(t.id)) {
+      return false;
+    }
+    if (addAlbumFilter !== 'all' && t.albumTitle !== addAlbumFilter) {
+      return false;
+    }
+    if (!addSearch.trim()) {
+      return true;
+    }
+    return (
+      matchesVietnameseQuery(t.title, addSearch) ||
+      matchesVietnameseQuery(t.artist, addSearch) ||
+      matchesVietnameseQuery(t.albumTitle, addSearch)
+    );
+  });
+
+  const totalSec = canonicalItems.reduce((sum, item) => sum + item.track.durationSec, 0);
   const { primaryCover, collageCovers } = uiStore.getPlaylistCovers(playlist);
 
-  const handlePlayTrack = (track: (typeof playlistTracks)[number]) => {
-    if (track.source === 'local') {
-      const localRecord = libraryStore.getSnapshot().tracks.find((r) => r.id === track.id);
-      if (localRecord) {
-        void uiStore.playLocalElectronTrack(localRecord);
-        return;
-      }
+  const handlePlayTrack = (trackId: string, status: string) => {
+    if (status !== 'available') {
+      uiStore.showToast('Bài hát này hiện đang thiếu file gốc hoặc nguồn không khả dụng.');
+      return;
     }
-    uiStore.playSampleTrack(track.id);
+    const context = {
+      contextId: `playlist-${playlist.id}`,
+      label: playlist.name,
+      kind: 'playlist' as const,
+      trackIds: canonicalItems
+        .filter((item) => item.track.status === 'available')
+        .map((item) => item.track.id),
+    };
+    const localRecord = libraryStore.getSnapshot().tracks.find((r) => r.id === trackId);
+    if (localRecord) {
+      void uiStore.playLocalElectronTrack(localRecord, context);
+    }
+  };
+
+  const handleCoverClick = () => {
+    if (typeof window !== 'undefined' && window.losslessApi?.importPlaylistArtwork) {
+      void uiStore.importPlaylistCustomCover(playlist.id);
+      return;
+    }
+    coverInputRef.current?.click();
   };
 
   const handleCoverSelected = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -94,10 +194,42 @@ export function PlaylistDetailPage() {
     }
   };
 
+  const handleConfirmAddSelected = async () => {
+    const ids = Array.from(selectedAddIds);
+    if (ids.length === 0) return;
+    await uiStore.addTracksToPlaylist(playlist.id, ids, { allowDuplicates: allowDuplicateAdd });
+    setSelectedAddIds(new Set());
+  };
+
+  const moveEntry = (fromIndex: number, toIndex: number) => {
+    if (
+      viewSort !== 'custom' ||
+      fromIndex === toIndex ||
+      fromIndex < 0 ||
+      toIndex < 0 ||
+      fromIndex >= canonicalItems.length ||
+      toIndex >= canonicalItems.length
+    ) {
+      return;
+    }
+    const ordered = canonicalItems.map((c) => c.entryId);
+    const [moved] = ordered.splice(fromIndex, 1);
+    ordered.splice(toIndex, 0, moved);
+    void uiStore.reorderPlaylistEntries(playlist.id, ordered);
+  };
+
+  const handleBatchRemoveEntries = async () => {
+    const ids = Array.from(selectedEntryIds);
+    if (ids.length === 0) return;
+    await uiStore.removeEntriesFromPlaylist(playlist.id, ids);
+    setSelectedEntryIds(new Set());
+    setSelectMode(false);
+  };
+
   return (
     <div
       data-testid="playlist-detail-page"
-      className="mx-auto max-w-[1160px] space-y-6 pb-32 pt-2"
+      className="mx-auto max-w-[1160px] space-y-6 pb-36 pt-2"
     >
       <input
         ref={coverInputRef}
@@ -109,11 +241,15 @@ export function PlaylistDetailPage() {
 
       <button
         type="button"
-        onClick={() => uiStore.navigate('home')}
+        onClick={() =>
+          ui.previousRoute === 'library'
+            ? uiStore.openLibraryTab('playlists')
+            : uiStore.navigate('home')
+        }
         className="lp-btn-ghost inline-flex items-center gap-2 rounded-full px-3.5 py-1.5 text-[12.5px] font-medium"
       >
         <ArrowLeft className="h-4 w-4" />
-        Quay lại
+        {ui.previousRoute === 'library' ? 'Quay lại Thư viện Playlist' : 'Quay lại Trang chủ'}
       </button>
 
       {/* Hero Header */}
@@ -136,14 +272,26 @@ export function PlaylistDetailPage() {
             </div>
           )}
 
-          <button
-            type="button"
-            onClick={() => coverInputRef.current?.click()}
-            className="absolute inset-x-2 bottom-2 flex items-center justify-center gap-1.5 rounded-xl bg-black/72 px-2.5 py-1.5 text-[11.5px] font-medium text-white opacity-0 backdrop-blur-md transition group-hover:opacity-100"
-          >
-            <ImagePlus className="h-3.5 w-3.5" />
-            Đổi bìa
-          </button>
+          <div className="absolute inset-x-2 bottom-2 flex flex-col gap-1 opacity-0 transition group-hover:opacity-100">
+            <button
+              type="button"
+              onClick={handleCoverClick}
+              className="flex items-center justify-center gap-1.5 rounded-xl bg-black/75 px-2.5 py-1.5 text-[11.5px] font-medium text-white backdrop-blur-md"
+            >
+              <ImagePlus className="h-3.5 w-3.5" />
+              {playlist.coverUrl ? 'Thay ảnh bìa' : 'Đổi ảnh bìa'}
+            </button>
+            {playlist.coverUrl && (
+              <button
+                type="button"
+                onClick={() => void uiStore.removePlaylistCustomCover(playlist.id)}
+                className="flex items-center justify-center gap-1 rounded-xl bg-black/75 px-2 py-1 text-[10.5px] text-amber-300 backdrop-blur-md"
+              >
+                <RotateCcw className="h-3 w-3" />
+                Gỡ ảnh tùy chỉnh
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="min-w-0 flex-1 space-y-3">
@@ -171,7 +319,7 @@ export function PlaylistDetailPage() {
                 <button
                   type="button"
                   onClick={() => {
-                    uiStore.renamePlaylist(playlist.id, nameDraft, descDraft);
+                    void uiStore.renamePlaylist(playlist.id, nameDraft, descDraft);
                     setIsEditing(false);
                   }}
                   style={{
@@ -197,11 +345,13 @@ export function PlaylistDetailPage() {
               <h1 className="font-display text-3xl font-bold tracking-tight text-[var(--text-primary)]">
                 {playlist.name}
               </h1>
-              <p className="max-w-2xl text-[13.5px] text-[var(--text-secondary)]">
-                {playlist.description}
-              </p>
+              {playlist.description && (
+                <p className="max-w-2xl text-[13.5px] text-[var(--text-secondary)]">
+                  {playlist.description}
+                </p>
+              )}
               <p className="text-[12.5px] text-[var(--text-muted)]">
-                {playlistTracks.length} bài hát · {Math.max(1, Math.round(totalSec / 60))} phút
+                {canonicalItems.length} bài hát · {formatDurationSeconds(totalSec)}
               </p>
             </>
           )}
@@ -210,7 +360,7 @@ export function PlaylistDetailPage() {
             <button
               type="button"
               onClick={() => uiStore.playPlaylist(playlist.id, false)}
-              disabled={playlistTracks.length === 0}
+              disabled={canonicalItems.length === 0}
               style={{
                 backgroundColor: userAccent.activeHex,
                 color: userAccent.onAccentText,
@@ -224,7 +374,7 @@ export function PlaylistDetailPage() {
             <button
               type="button"
               onClick={() => uiStore.playPlaylist(playlist.id, true)}
-              disabled={playlistTracks.length === 0}
+              disabled={canonicalItems.length === 0}
               className="lp-btn-ghost inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-[13px] font-medium disabled:opacity-45"
             >
               <Shuffle className="h-4 w-4" />
@@ -233,6 +383,7 @@ export function PlaylistDetailPage() {
 
             <button
               type="button"
+              data-testid="playlist-add-tracks-btn"
               onClick={() => setShowAddTracks((prev) => !prev)}
               className="lp-btn-ghost inline-flex items-center gap-1.5 rounded-full px-4 py-2.5 text-[13px] font-medium"
             >
@@ -250,15 +401,16 @@ export function PlaylistDetailPage() {
               className="lp-btn-ghost inline-flex items-center gap-1.5 rounded-full px-3.5 py-2.5 text-[13px] font-medium"
             >
               <Pencil className="h-3.5 w-3.5" />
-              Đổi tên
+              Sửa thông tin
             </button>
 
             {confirmDelete ? (
               <div className="flex items-center gap-1.5 rounded-full border border-rose-500/40 bg-rose-500/10 px-3 py-1.5 text-[12px]">
-                <span className="text-rose-400">Xác nhận xóa?</span>
+                <span className="text-rose-400">Chỉ xóa playlist, giữ file nhạc?</span>
                 <button
                   type="button"
-                  onClick={() => uiStore.deletePlaylist(playlist.id)}
+                  data-testid="playlist-confirm-delete-btn"
+                  onClick={() => void uiStore.deletePlaylist(playlist.id)}
                   className="rounded-full bg-rose-600 px-2.5 py-0.5 font-semibold text-white"
                 >
                   Xóa
@@ -274,6 +426,7 @@ export function PlaylistDetailPage() {
             ) : (
               <button
                 type="button"
+                data-testid="playlist-delete-btn"
                 onClick={() => setConfirmDelete(true)}
                 className="lp-btn-ghost inline-flex items-center gap-1.5 rounded-full px-3.5 py-2.5 text-[13px] font-medium text-rose-400 hover:text-rose-300"
               >
@@ -285,64 +438,205 @@ export function PlaylistDetailPage() {
         </div>
       </section>
 
-      {/* Quick Add Tracks Picker */}
+      {/* Rich Multi-Select Add Tracks Drawer */}
       {showAddTracks && (
-        <section className="lp-glass-panel rounded-3xl p-5">
-          <div className="mb-3 flex items-center justify-between">
+        <section data-testid="playlist-add-tracks-panel" className="lp-glass-panel space-y-3 rounded-3xl p-5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="font-display text-base font-semibold text-[var(--text-primary)]">
-              Thêm bài hát từ thư viện ({addableTracks.length})
+              Thêm bài hát từ Thư viện ({addableTracks.length})
             </h2>
-            <button
-              type="button"
-              onClick={() => setShowAddTracks(false)}
-              className="lp-btn-ghost flex h-8 w-8 items-center justify-center rounded-full"
-            >
-              <X className="h-4 w-4" />
-            </button>
+            <div className="flex items-center gap-2">
+              {selectedAddIds.size > 0 && (
+                <button
+                  type="button"
+                  onClick={() => void handleConfirmAddSelected()}
+                  style={{
+                    backgroundColor: userAccent.activeHex,
+                    color: userAccent.onAccentText,
+                  }}
+                  className="rounded-full px-4 py-1.5 text-[12px] font-semibold"
+                >
+                  Thêm {selectedAddIds.size} bài đã chọn
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setShowAddTracks(false)}
+                className="lp-btn-ghost flex h-8 w-8 items-center justify-center rounded-full"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
           </div>
+
+          <div className="flex flex-wrap items-center gap-2.5">
+            <div className="relative flex-1 min-w-[200px]">
+              <Search className="pointer-events-none absolute top-1/2 left-3 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-muted)]" />
+              <input
+                type="text"
+                value={addSearch}
+                onChange={(e) => setAddSearch(e.target.value)}
+                placeholder="Tìm tên bài, nghệ sĩ, album..."
+                className="lp-surface-input h-9 w-full rounded-full pr-3 pl-8 text-[12.5px] outline-none"
+              />
+            </div>
+
+            <select
+              value={addAlbumFilter}
+              onChange={(e) => setAddAlbumFilter(e.target.value)}
+              className="lp-surface-input h-9 max-w-[210px] rounded-full px-3 text-[12px] outline-none"
+            >
+              <option value="all">Tất cả Album</option>
+              {albumOptions.map((alb) => (
+                <option key={alb} value={alb}>
+                  {alb}
+                </option>
+              ))}
+            </select>
+
+            <label className="flex cursor-pointer items-center gap-1.5 text-[12px] text-[var(--text-secondary)]">
+              <input
+                type="checkbox"
+                checked={allowDuplicateAdd}
+                onChange={(e) => setAllowDuplicateAdd(e.target.checked)}
+                className="h-3.5 w-3.5 accent-[var(--user-accent)]"
+              />
+              <span>Hiện cả bài đã có</span>
+            </label>
+
+            {addableTracks.length > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (selectedAddIds.size === addableTracks.length) {
+                    setSelectedAddIds(new Set());
+                  } else {
+                    setSelectedAddIds(new Set(addableTracks.map((t) => t.id)));
+                  }
+                }}
+                className="lp-btn-ghost rounded-full px-3 py-1.5 text-[11.5px] font-medium"
+              >
+                {selectedAddIds.size === addableTracks.length ? 'Bỏ chọn' : 'Chọn tất cả'}
+              </button>
+            )}
+          </div>
+
           {addableTracks.length === 0 ? (
-            <p className="text-[13px] text-[var(--text-muted)]">
-              Tất cả bài hát hiện có trong thư viện đã nằm trong playlist này.
+            <p className="py-4 text-center text-[13px] text-[var(--text-muted)]">
+              {allTracks.length === 0
+                ? 'Thư viện chưa có bài hát nào. Hãy import nhạc trước.'
+                : 'Không có bài hát phù hợp hoặc tất cả đã nằm trong playlist.'}
             </p>
           ) : (
-            <div className="grid max-h-[240px] gap-1.5 overflow-y-auto pr-1 sm:grid-cols-2">
-              {addableTracks.map((track) => (
-                <div
-                  key={track.id}
-                  className="flex items-center justify-between gap-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-glass-light)] px-3 py-2"
-                >
-                  <div className="flex min-w-0 items-center gap-2.5">
-                    <img
-                      src={track.coverUrl}
-                      alt=""
-                      className="h-9 w-9 shrink-0 rounded-lg object-cover"
-                    />
-                    <div className="min-w-0">
-                      <p className="truncate text-[13px] font-medium text-[var(--text-primary)]">
-                        {track.title}
-                      </p>
-                      <p className="truncate text-[11.5px] text-[var(--text-muted)]">
-                        {track.artist}
-                      </p>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => uiStore.addTrackToPlaylist(playlist.id, track.id)}
-                    className="lp-btn-ghost shrink-0 rounded-full px-3 py-1 text-[11.5px] font-semibold"
+            <div className="grid max-h-[260px] gap-1.5 overflow-y-auto pr-1 sm:grid-cols-2">
+              {addableTracks.map((track) => {
+                const checked = selectedAddIds.has(track.id);
+                return (
+                  <div
+                    key={track.id}
+                    className={`flex items-center justify-between gap-2.5 rounded-xl border px-3 py-2 transition ${
+                      checked
+                        ? 'border-[var(--user-accent)] bg-[var(--surface-hover)]'
+                        : 'border-[var(--border-subtle)] bg-[var(--surface-glass-light)]'
+                    }`}
                   >
-                    + Thêm
-                  </button>
-                </div>
-              ))}
+                    <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => {
+                          setSelectedAddIds((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(track.id)) next.delete(track.id);
+                            else next.add(track.id);
+                            return next;
+                          });
+                        }}
+                        className="h-3.5 w-3.5 shrink-0 accent-[var(--user-accent)]"
+                      />
+                      <img
+                        src={track.coverUrl}
+                        alt=""
+                        className="h-9 w-9 shrink-0 rounded-lg object-cover"
+                      />
+                      <div className="min-w-0">
+                        <p className="truncate text-[13px] font-medium text-[var(--text-primary)]">
+                          {track.title}
+                        </p>
+                        <p className="truncate text-[11.5px] text-[var(--text-muted)]">
+                          {track.artist} · {track.albumTitle}
+                        </p>
+                      </div>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void uiStore.addTracksToPlaylist(playlist.id, [track.id], {
+                          allowDuplicates: allowDuplicateAdd,
+                        })
+                      }
+                      className="lp-btn-ghost shrink-0 rounded-full px-3 py-1 text-[11.5px] font-semibold"
+                    >
+                      + Thêm
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           )}
         </section>
       )}
 
+      {/* Sort & Batch Removal Bar */}
+      {canonicalItems.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={viewSort}
+              onChange={(e) => setViewSort(e.target.value as PlaylistViewSort)}
+              aria-label="Kiểu hiển thị thứ tự playlist"
+              className="lp-surface-input h-9 rounded-full px-3.5 text-[12px] outline-none"
+            >
+              <option value="custom">Thứ tự Playlist (kéo thả để sắp xếp)</option>
+              <option value="title">Xem theo Tên bài A–Z</option>
+              <option value="artist">Xem theo Nghệ sĩ A–Z</option>
+              <option value="album">Xem theo Album</option>
+              <option value="duration">Xem theo Thời lượng</option>
+            </select>
+            {viewSort !== 'custom' && (
+              <span className="text-[11.5px] text-[var(--text-muted)]">
+                Chế độ xem tạm — thứ tự gốc của playlist vẫn được giữ nguyên
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            {selectMode && selectedEntryIds.size > 0 && (
+              <button
+                type="button"
+                onClick={() => void handleBatchRemoveEntries()}
+                className="rounded-full bg-rose-600 px-3.5 py-1.5 text-[12px] font-semibold text-white"
+              >
+                Gỡ {selectedEntryIds.size} bài khỏi playlist
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                setSelectMode((v) => !v);
+                setSelectedEntryIds(new Set());
+              }}
+              className="lp-btn-ghost rounded-full px-3.5 py-1.5 text-[12px] font-medium"
+            >
+              {selectMode ? 'Xong' : 'Chọn nhiều để gỡ'}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Playlist Track List */}
       <section className="lp-glass-panel overflow-hidden rounded-[26px]">
-        {playlistTracks.length === 0 ? (
+        {canonicalItems.length === 0 ? (
           <div className="p-12 text-center">
             <p className="text-[14px] text-[var(--text-secondary)]">
               Playlist này chưa có bài hát nào.
@@ -362,60 +656,140 @@ export function PlaylistDetailPage() {
           </div>
         ) : (
           <div className="divide-y divide-[var(--border-subtle)]">
-            {playlistTracks.map((track, idx) => (
-              <div
-                key={track.id}
-                className="group flex items-center gap-4 px-5 py-3 transition hover:bg-[var(--surface-hover)]"
-              >
-                <span className="font-mono-tabular w-6 text-right text-[12px] text-[var(--text-muted)]">
-                  {idx + 1}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => handlePlayTrack(track)}
-                  className="relative h-11 w-11 shrink-0 overflow-hidden rounded-xl"
+            {displayedItems.map((item, idx) => {
+              const { entryId, track } = item;
+              const isMissing = track.status !== 'available';
+              const isSelected = selectedEntryIds.has(entryId);
+              return (
+                <div
+                  key={entryId}
+                  draggable={viewSort === 'custom' && !selectMode}
+                  onDragStart={() => setDragIdx(idx)}
+                  onDragOver={(e) => {
+                    if (viewSort === 'custom' && dragIdx !== null) e.preventDefault();
+                  }}
+                  onDrop={() => {
+                    if (dragIdx !== null) {
+                      moveEntry(dragIdx, idx);
+                    }
+                    setDragIdx(null);
+                  }}
+                  onDragEnd={() => setDragIdx(null)}
+                  className={`group flex items-center gap-3 px-4 py-3 transition hover:bg-[var(--surface-hover)] ${
+                    isMissing ? 'bg-amber-500/[0.05] opacity-75' : ''
+                  }`}
                 >
-                  <img
-                    src={track.coverUrl}
-                    alt={track.title}
-                    className="h-full w-full object-cover"
-                  />
-                  <span className="absolute inset-0 flex items-center justify-center bg-black/45 opacity-0 transition group-hover:opacity-100">
-                    <Play className="ml-0.5 h-4 w-4 fill-white text-white" />
+                  {selectMode ? (
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => {
+                        setSelectedEntryIds((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(entryId)) next.delete(entryId);
+                          else next.add(entryId);
+                          return next;
+                        });
+                      }}
+                      className="h-4 w-4 shrink-0 accent-[var(--user-accent)]"
+                    />
+                  ) : (
+                    viewSort === 'custom' && (
+                      <GripVertical className="h-4 w-4 shrink-0 cursor-grab text-[var(--text-muted)] opacity-50 group-hover:opacity-100" />
+                    )
+                  )}
+
+                  <span className="font-mono-tabular w-6 text-right text-[12px] text-[var(--text-muted)]">
+                    {idx + 1}
                   </span>
-                </button>
-                <div className="min-w-0 flex-1">
+
                   <button
                     type="button"
-                    onClick={() => handlePlayTrack(track)}
-                    className="block max-w-full truncate text-left text-[14px] font-medium text-[var(--text-primary)] hover:underline"
+                    onClick={() => handlePlayTrack(track.id, track.status)}
+                    className="relative h-11 w-11 shrink-0 overflow-hidden rounded-xl bg-black/20"
                   >
-                    {track.title}
+                    <img
+                      src={track.coverUrl}
+                      alt={track.title}
+                      className="h-full w-full object-cover"
+                    />
+                    {isMissing ? (
+                      <span className="absolute inset-0 flex items-center justify-center bg-black/60 text-amber-300">
+                        <AlertTriangle className="h-4 w-4" />
+                      </span>
+                    ) : (
+                      <span className="absolute inset-0 flex items-center justify-center bg-black/45 opacity-0 transition group-hover:opacity-100">
+                        <Play className="ml-0.5 h-4 w-4 fill-white text-white" />
+                      </span>
+                    )}
                   </button>
+
+                  <div className="min-w-0 flex-1">
+                    <button
+                      type="button"
+                      onClick={() => handlePlayTrack(track.id, track.status)}
+                      className="block max-w-full truncate text-left text-[14px] font-medium text-[var(--text-primary)] hover:underline"
+                    >
+                      {track.title}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => uiStore.openArtistDetail(track.artist)}
+                      className="block max-w-full truncate text-left text-[12px] text-[var(--text-secondary)] hover:underline"
+                    >
+                      {track.artist} · {track.albumTitle}
+                    </button>
+                  </div>
+
+                  {isMissing ? (
+                    <span className="rounded-full border border-amber-500/35 bg-amber-500/15 px-2.5 py-0.5 text-[11px] text-amber-600 dark:text-amber-200">
+                      Thiếu file
+                    </span>
+                  ) : (
+                    <span className="hidden text-[11px] font-medium text-[var(--text-muted)] md:inline">
+                      {track.formatBadge}
+                    </span>
+                  )}
+
+                  <span className="font-mono-tabular text-[12.5px] text-[var(--text-muted)]">
+                    {formatDurationSeconds(track.durationSec)}
+                  </span>
+
+                  {viewSort === 'custom' && !selectMode && (
+                    <div className="flex items-center gap-0.5 opacity-0 transition group-hover:opacity-100">
+                      <button
+                        type="button"
+                        disabled={idx === 0}
+                        onClick={() => moveEntry(idx, idx - 1)}
+                        title="Di chuyển lên"
+                        className="flex h-7 w-7 items-center justify-center rounded-full text-[var(--text-muted)] hover:bg-[var(--surface-glass-light)] hover:text-[var(--text-primary)] disabled:opacity-30"
+                      >
+                        <ArrowUp className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        disabled={idx === canonicalItems.length - 1}
+                        onClick={() => moveEntry(idx, idx + 1)}
+                        title="Di chuyển xuống"
+                        className="flex h-7 w-7 items-center justify-center rounded-full text-[var(--text-muted)] hover:bg-[var(--surface-glass-light)] hover:text-[var(--text-primary)] disabled:opacity-30"
+                      >
+                        <ArrowDown className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  )}
+
                   <button
                     type="button"
-                    onClick={() => uiStore.openArtistDetail(track.artist)}
-                    className="block max-w-full truncate text-left text-[12px] text-[var(--text-secondary)] hover:underline"
+                    onClick={() => void uiStore.removeEntriesFromPlaylist(playlist.id, [entryId])}
+                    aria-label={`Gỡ ${track.title} khỏi playlist`}
+                    title="Gỡ khỏi playlist (không xóa khỏi thư viện)"
+                    className="lp-btn-ghost flex h-8 w-8 items-center justify-center rounded-full opacity-60 transition group-hover:opacity-100"
                   >
-                    {track.artist} · {track.albumTitle}
+                    <X className="h-3.5 w-3.5" />
                   </button>
                 </div>
-                <span className="hidden text-[11px] font-medium text-[var(--text-muted)] md:inline">
-                  {track.formatBadge}
-                </span>
-                <span className="font-mono-tabular text-[12.5px] text-[var(--text-muted)]">
-                  {formatDurationSeconds(track.durationSec)}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => uiStore.removeTrackFromPlaylist(playlist.id, track.id)}
-                  aria-label={`Gỡ ${track.title} khỏi playlist`}
-                  className="lp-btn-ghost flex h-8 w-8 items-center justify-center rounded-full opacity-0 transition group-hover:opacity-100"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </section>
