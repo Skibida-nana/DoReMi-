@@ -271,7 +271,7 @@ export function MiniPlayer() {
                 onClick={() => (hasTrack ? uiStore.openNowPlaying() : uiStore.openLibraryTab('songs'))}
                 data-testid="mini-player-title"
                 title={title}
-                className="truncate text-left text-[13.5px] font-semibold text-[var(--text-primary)] hover:underline"
+                className="truncate py-[1px] text-left text-[13.5px] font-semibold leading-[1.35] text-[var(--text-primary)] hover:underline"
               >
                 {title}
               </button>
@@ -287,7 +287,7 @@ export function MiniPlayer() {
                 }}
                 data-testid="mini-player-artist"
                 title={artist}
-                className="truncate text-[12px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] disabled:hover:text-[var(--text-secondary)]"
+                className="truncate py-[1px] text-[12px] leading-[1.35] text-[var(--text-secondary)] hover:text-[var(--text-primary)] disabled:hover:text-[var(--text-secondary)]"
               >
                 {artist}
               </button>

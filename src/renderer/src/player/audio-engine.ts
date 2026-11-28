@@ -72,6 +72,36 @@ export interface AudioElementLike {
   removeEventListener(type: string, listener: () => void): void;
 }
 
+export interface RemoteTrackDiagnosticHint {
+  errorCode: string | null;
+  statusCode: number | null;
+  detail: string | null;
+}
+
+export interface ExternalTrackResolver {
+  ownsTrackId(trackId: string): boolean;
+  getTrack(trackId: string): TrackRecord | null;
+  resolveMediaUrl(trackId: string): string;
+  isTrackPlayable(trackId: string): boolean;
+  resolveRemoteDiagnosticHint?(trackId: string): Promise<RemoteTrackDiagnosticHint | null>;
+}
+
+export interface AutoContinueRequest {
+  lastTrackId: string | null;
+  lastContext: PlaybackContextDescriptor | null;
+  shuffleEnabled: boolean;
+  recentTrackIds: string[];
+}
+
+export interface AutoContinueResolution {
+  context: PlaybackContextDescriptor;
+  startTrackId?: string;
+}
+
+export type AutoContinueResolver = (
+  request: AutoContinueRequest,
+) => AutoContinueResolution | null;
+
 export interface AudioEngineDependencies {
   createAudioElement?: () => AudioElementLike;
   /** Optional Web Audio Context factory (defaults to browser AudioContext; null in Node.js tests unless explicitly injected) */
@@ -84,6 +114,16 @@ export interface AudioEngineDependencies {
   queueController?: PlaybackQueueController;
   /** Optional callback when auto-advance / next / prev lands on a track outside local TrackRecord catalog */
   onExternalEntryActivated?: (entry: PlaybackQueueEntry) => Promise<void> | void;
+  /** Optional resolver for non-local tracks (e.g. Phase 6.1 Remote Playback Source Adapter) */
+  externalTrackResolver?: ExternalTrackResolver;
+  /** Optional continuation resolver when local playlist/album/queue ends cleanly (Phase 6.1.1 IMP-04) */
+  autoContinueResolver?: AutoContinueResolver;
+  /** Optional policy blocker (e.g. Sleep Timer end-of-track/expired) preventing Auto Continue */
+  shouldBlockAutoContinue?: () => boolean;
+  /** Optional predicate indicating a Remote transport handover/reconnection is actively recovering `trackId` (Phase 6.4) */
+  isRemoteHandoverPending?: (trackId: string) => boolean;
+  /** Optional initial auto-continue preference (default: true) */
+  autoContinueEnabled?: boolean;
   /** Optional step interval override in ms for deterministic unit tests (default: 24ms) */
   fadeStepMs?: number;
   /** Optional clock override in ms for deterministic unit tests */
@@ -164,6 +204,12 @@ export class AudioEngine implements AudioEngineController {
   private readonly onExternalEntryActivatedFn?: (
     entry: PlaybackQueueEntry,
   ) => Promise<void> | void;
+  private externalTrackResolver?: ExternalTrackResolver;
+  private autoContinueResolver?: AutoContinueResolver;
+  private shouldBlockAutoContinueFn?: () => boolean;
+  private isRemoteHandoverPendingFn?: (trackId: string) => boolean;
+  private autoContinueEnabled = true;
+  private explicitStopped = false;
   private readonly fadeStepMs: number;
   private readonly nowMs: () => number;
   private readonly listeners = new Set<(state: PlaybackState) => void>();
@@ -258,6 +304,12 @@ export class AudioEngine implements AudioEngineController {
     this.onSessionCheckpointFn = deps.onSessionCheckpoint;
     this.onDiagnosticFn = deps.onDiagnostic;
     this.onExternalEntryActivatedFn = deps.onExternalEntryActivated;
+    this.externalTrackResolver = deps.externalTrackResolver;
+    this.autoContinueResolver = deps.autoContinueResolver;
+    this.shouldBlockAutoContinueFn = deps.shouldBlockAutoContinue;
+    this.isRemoteHandoverPendingFn = deps.isRemoteHandoverPending;
+    this.autoContinueEnabled =
+      typeof deps.autoContinueEnabled === 'boolean' ? deps.autoContinueEnabled : true;
     this.fadeStepMs = Math.max(8, deps.fadeStepMs ?? 24);
     this.nowMs = deps.nowMs ?? (() => Date.now());
 
@@ -265,6 +317,7 @@ export class AudioEngine implements AudioEngineController {
       deps.queueController ??
       new PlaybackQueueController({
         isTrackPlayable: (trackId) => this.isLocalTrackPlayable(trackId),
+        getTrackMeta: (trackId) => this.resolveTrackMetaForQueue(trackId),
       });
     this.unsubscribeQueueController = this.queueController.subscribe(() => {
       this.canNextDirty = true;
@@ -278,8 +331,223 @@ export class AudioEngine implements AudioEngineController {
   }
 
   private isLocalTrackPlayable(trackId: string): boolean {
+    if (this.externalTrackResolver?.ownsTrackId(trackId)) {
+      return this.externalTrackResolver.isTrackPlayable(trackId);
+    }
     const track = this.trackCatalog.get(trackId);
     return Boolean(track && track.status === 'available');
+  }
+
+  setExternalTrackResolver(resolver: ExternalTrackResolver | undefined): void {
+    this.externalTrackResolver = resolver;
+  }
+
+  setAutoContinueEnabled(enabled: boolean): void {
+    this.autoContinueEnabled = Boolean(enabled);
+  }
+
+  isAutoContinueEnabled(): boolean {
+    return this.autoContinueEnabled;
+  }
+
+  setAutoContinueResolver(resolver: AutoContinueResolver | undefined): void {
+    this.autoContinueResolver = resolver;
+  }
+
+  setAutoContinueBlocker(fn: (() => boolean) | undefined): void {
+    this.shouldBlockAutoContinueFn = fn;
+  }
+
+  setRemoteHandoverPendingPredicate(fn: ((trackId: string) => boolean) | undefined): void {
+    this.isRemoteHandoverPendingFn = fn;
+  }
+
+  /**
+   * Phase 6.4 Playback-Aware Transport Handover & Position Recovery.
+   * Reopens the SAME logical track (`remote::<hostId>::<trackId>`) on the newly verified transport
+   * at the exact media clock position WITHOUT mutating Queue, Shuffle, Repeat, Volume, EQ, ReplayGain,
+   * or creating duplicate listening sessions. Strictly respects intervening user Pause/Stop/Next/Track intent.
+   */
+  async recoverCurrentTrackTransport(options: {
+    expectedTrackId: string;
+    targetTimeSeconds?: number;
+    shouldPlay?: boolean;
+    handoverSeq: number;
+  }): Promise<{
+    recovered: boolean;
+    positionBeforeSec: number;
+    positionAfterSec: number;
+  }> {
+    const posBefore = Number.isFinite(this.currentTimeSeconds) ? this.currentTimeSeconds : 0;
+    if (
+      this.explicitStopped ||
+      !this.currentTrackId ||
+      this.currentTrackId !== options.expectedTrackId
+    ) {
+      return { recovered: false, positionBeforeSec: posBefore, positionAfterSec: posBefore };
+    }
+
+    const track = this.getCurrentTrack();
+    if (!track || !this.externalTrackResolver?.ownsTrackId(track.id)) {
+      return { recovered: false, positionBeforeSec: posBefore, positionAfterSec: posBefore };
+    }
+
+    // Preserve user Pause intent: if user explicitly paused during handover, NEVER force autoplay!
+    const effectiveShouldPlay =
+      this.status === 'paused'
+        ? false
+        : options.shouldPlay !== undefined
+          ? options.shouldPlay
+          : this.status === 'playing' || this.status === 'loading';
+
+    const desiredTime = clamp(
+      options.targetTimeSeconds !== undefined && Number.isFinite(options.targetTimeSeconds)
+        ? options.targetTimeSeconds
+        : posBefore,
+      0,
+      this.durationSeconds > 0 ? Math.max(0, this.durationSeconds - 0.05) : 86_400,
+    );
+
+    const requestToken = ++this.playRequestSeq;
+    this.cancelActiveFade(true);
+    // Pause active listening segment during stream switch so reconnection delay is never counted
+    this.pauseSessionSegment(false);
+
+    let baseMediaUrl: string;
+    try {
+      baseMediaUrl = this.externalTrackResolver.resolveMediaUrl(track.id);
+    } catch {
+      return { recovered: false, positionBeforeSec: posBefore, positionAfterSec: posBefore };
+    }
+    const mediaUrl = `${baseMediaUrl}${baseMediaUrl.includes('?') ? '&' : '?'}ho=${options.handoverSeq}`;
+
+    this.switchingTrack = true;
+    this.audio.pause();
+    this.switchingTrack = false;
+
+    this.errorMessage = null;
+    this.playbackError = null;
+    this.activeAudioSrc = mediaUrl;
+    if (effectiveShouldPlay) {
+      this.status = 'loading';
+    } else {
+      this.status = 'paused';
+    }
+    this.currentTimeSeconds = desiredTime;
+    this.emitState();
+
+    // Wait cleanly for loadedmetadata before seeking & playing so Chromium Range demuxer
+    // seeks exactly once instead of double-seeking during play().
+    const waitMeta = new Promise<void>((resolve) => {
+      let settled = false;
+      const done = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        this.audio.removeEventListener('loadedmetadata', done);
+        this.audio.removeEventListener('canplay', done);
+        resolve();
+      };
+      const timer = setTimeout(done, 2_500);
+      this.audio.addEventListener('loadedmetadata', done);
+      this.audio.addEventListener('canplay', done);
+    });
+
+    this.audio.src = mediaUrl;
+    this.audio.load();
+    await waitMeta;
+
+    if (requestToken !== this.playRequestSeq) {
+      return {
+        recovered: false,
+        positionBeforeSec: posBefore,
+        positionAfterSec: this.currentTimeSeconds,
+      };
+    }
+
+    const maxDur =
+      Number.isFinite(this.audio.duration) && this.audio.duration > 0
+        ? Math.max(0, this.audio.duration - 0.05)
+        : desiredTime;
+    const boundedTarget = clamp(desiredTime, 0, maxDur);
+    if (boundedTarget > 0) {
+      try {
+        this.audio.currentTime = boundedTarget;
+      } catch {
+        // Ignore on mock audio element
+      }
+    }
+    this.currentTimeSeconds = boundedTarget;
+
+    if (!effectiveShouldPlay) {
+      this.status = 'paused';
+      this.emitState();
+      return {
+        recovered: true,
+        positionBeforeSec: posBefore,
+        positionAfterSec: this.currentTimeSeconds,
+      };
+    }
+
+    if (this.dsp.canInitialize()) {
+      await this.ensureDspReady();
+      if (requestToken !== this.playRequestSeq) {
+        return {
+          recovered: false,
+          positionBeforeSec: posBefore,
+          positionAfterSec: this.currentTimeSeconds,
+        };
+      }
+    }
+
+    try {
+      this.inAudioPlayCall = true;
+      await this.audio.play();
+      this.inAudioPlayCall = false;
+      if (requestToken !== this.playRequestSeq) {
+        return {
+          recovered: false,
+          positionBeforeSec: posBefore,
+          positionAfterSec: this.currentTimeSeconds,
+        };
+      }
+      if (this.dsp.isActive()) {
+        await this.dsp.resumeIfSuspended();
+        this.emitDspState();
+      }
+      this.status = 'playing';
+      this.errorMessage = null;
+      this.playbackError = null;
+      this.currentAttemptStartedPlaying = true;
+      this.startOrResumeSession(track);
+      this.emitState();
+      return {
+        recovered: true,
+        positionBeforeSec: posBefore,
+        positionAfterSec: this.currentTimeSeconds,
+      };
+    } catch {
+      this.inAudioPlayCall = false;
+      return {
+        recovered: false,
+        positionBeforeSec: posBefore,
+        positionAfterSec: this.currentTimeSeconds,
+      };
+    }
+  }
+
+  private resolveTrackMetaForQueue(trackId: string) {
+    const rec =
+      this.trackCatalog.get(trackId) ?? this.externalTrackResolver?.getTrack(trackId) ?? null;
+    if (!rec) {
+      return { trackId };
+    }
+    return {
+      trackId,
+      albumTitle: rec.album,
+      albumArtist: rec.album_artist ?? null,
+      artist: rec.artist,
+    };
   }
 
   // ---------------------------------------------------------------------------
@@ -523,6 +791,7 @@ export class AudioEngine implements AudioEngineController {
     options: { fromAutoAdvance?: boolean } = {},
   ): Promise<void> {
     const fromAutoAdvance = Boolean(options.fromAutoAdvance);
+    this.explicitStopped = false;
     const requestToken = ++this.playRequestSeq;
     this.playbackGeneration += 1;
     const generation = this.playbackGeneration;
@@ -531,7 +800,10 @@ export class AudioEngine implements AudioEngineController {
     this.currentAttemptStartedPlaying = false;
     this.currentQueueEntryId = entry.queueEntryId;
 
-    const track = this.trackCatalog.get(entry.trackId) ?? null;
+    const isExternalTrack = Boolean(this.externalTrackResolver?.ownsTrackId(entry.trackId));
+    const track = isExternalTrack
+      ? this.externalTrackResolver!.getTrack(entry.trackId) ?? null
+      : this.trackCatalog.get(entry.trackId) ?? null;
     if (!track) {
       if (this.onExternalEntryActivatedFn) {
         this.switchingTrack = true;
@@ -640,8 +912,8 @@ export class AudioEngine implements AudioEngineController {
     this.emitState();
     this.emitDspState();
 
-    // Verify source file on disk via Electron Main before streaming
-    if (this.verifyTrackFn) {
+    // Verify local source file on disk via Electron Main before streaming (skipped for remote tracks)
+    if (!isExternalTrack && this.verifyTrackFn) {
       try {
         const check = await this.verifyTrackFn(track.id);
         if (requestToken !== this.playRequestSeq) {
@@ -692,7 +964,9 @@ export class AudioEngine implements AudioEngineController {
 
     let mediaUrl: string;
     try {
-      mediaUrl = buildTrackMediaUrl(track.id);
+      mediaUrl = isExternalTrack
+        ? this.externalTrackResolver!.resolveMediaUrl(track.id)
+        : buildTrackMediaUrl(track.id);
     } catch (error) {
       this.setFadeMultiplier(1);
       this.setErrorState(
@@ -810,6 +1084,28 @@ export class AudioEngine implements AudioEngineController {
     this.audio.pause();
     if (this.status === 'playing' || this.status === 'loading') {
       this.status = 'paused';
+      this.emitState();
+    }
+  }
+
+  stop(reason: 'user-stop' | 'sleep-timer' = 'user-stop'): void {
+    void reason;
+    this.explicitStopped = true;
+    this.playRequestSeq += 1;
+    this.playbackGeneration += 1;
+    this.cancelActiveFade(true);
+    this.finalizeSession(true);
+    this.switchingTrack = true;
+    this.audio.pause();
+    this.switchingTrack = false;
+    try {
+      this.audio.currentTime = 0;
+    } catch {
+      // Ignore on mocks
+    }
+    this.currentTimeSeconds = 0;
+    if (this.currentTrackId) {
+      this.status = 'ended';
       this.emitState();
     }
   }
@@ -1174,6 +1470,10 @@ export class AudioEngine implements AudioEngineController {
   // ---------------------------------------------------------------------------
 
   private startOrResumeSession(track: TrackRecord): void {
+    // Remote tracks do not mutate local SQLite listening statistics in Phase 6.1
+    if (this.externalTrackResolver?.ownsTrackId(track.id)) {
+      return;
+    }
     const now = this.nowMs();
     if (!this.activeSession || this.activeSession.track.id !== track.id) {
       if (this.activeSession) {
@@ -1381,19 +1681,69 @@ export class AudioEngine implements AudioEngineController {
       if (this.switchingTrack || !this.activeAudioSrc) {
         return;
       }
+      const track = this.getCurrentTrack();
+      // Phase 6.4: If SmartConnectionManager is actively recovering/switching transport for this Remote track,
+      // hold the exact media position in `loading` state without failing the queue entry or auto-skipping!
+      if (track && this.isRemoteHandoverPendingFn?.(track.id)) {
+        this.pauseSessionSegment(false);
+        this.cancelActiveFade(true);
+        if (this.status !== 'paused') {
+          this.status = 'loading';
+        }
+        this.emitState();
+        return;
+      }
+
       this.finalizeSession(true);
       this.cancelActiveFade(true);
       this.queueController.markCurrentPlaybackFailed();
-      const track = this.getCurrentTrack();
+      const capturedAttemptId = this.currentAttemptId;
+      const capturedRequestSeq = this.playRequestSeq;
+      const capturedGeneration = this.playbackGeneration;
+      const mediaErrSnapshot = this.audio.error
+        ? { code: this.audio.error.code, message: this.audio.error.message }
+        : null;
+
       this.setErrorState(
         buildPlaybackErrorDetails({
-          attemptId: this.currentAttemptId,
+          attemptId: capturedAttemptId,
           stage: 'runtime-media',
           track,
-          mediaError: this.audio.error as MediaErrorContext | null,
+          mediaError: mediaErrSnapshot,
         }),
       );
       this.emitState();
+
+      if (
+        track &&
+        this.externalTrackResolver?.ownsTrackId(track.id) &&
+        this.externalTrackResolver.resolveRemoteDiagnosticHint
+      ) {
+        void this.externalTrackResolver
+          .resolveRemoteDiagnosticHint(track.id)
+          .then((remoteHint) => {
+            if (
+              !remoteHint ||
+              this.playRequestSeq !== capturedRequestSeq ||
+              this.playbackGeneration !== capturedGeneration
+            ) {
+              return;
+            }
+            const refined = buildPlaybackErrorDetails({
+              attemptId: capturedAttemptId,
+              stage: 'runtime-media',
+              track,
+              mediaError: mediaErrSnapshot,
+              remoteFailureHint: remoteHint,
+            });
+            if (refined.code !== this.playbackError?.code || refined.technicalDetail !== this.playbackError?.technicalDetail) {
+              this.playbackError = refined;
+              this.errorMessage = refined.summary;
+              this.emitState();
+            }
+          })
+          .catch(() => {});
+      }
 
       if (
         !this.inAudioPlayCall &&
@@ -1422,6 +1772,18 @@ export class AudioEngine implements AudioEngineController {
     if (endedGeneration !== this.playbackGeneration) {
       return;
     }
+    const queueSnapBeforeEnd = this.queueController.getState();
+    const endedTrackId = queueSnapBeforeEnd.currentEntry?.trackId ?? this.currentTrackId;
+    const endedFromError = Boolean(this.playbackError);
+    const endedIsRemote = Boolean(
+      endedTrackId && this.externalTrackResolver?.ownsTrackId(endedTrackId),
+    );
+    const lastContext = queueSnapBeforeEnd.context;
+
+    if (this.explicitStopped || this.shouldBlockAutoContinueFn?.()) {
+      return;
+    }
+
     const resolution = this.queueController.resolveNaturalTrackEnd();
     if (endedGeneration !== this.playbackGeneration) {
       return;
@@ -1480,6 +1842,42 @@ export class AudioEngine implements AudioEngineController {
 
     if (resolution.action === 'play-entry') {
       await this.playQueueEntry(resolution.entry, { fromAutoAdvance: true });
+      return;
+    }
+
+    // IMP-04: Automatic Playback Continuation when active queue/context naturally ends
+    const controlsAfterEnd = this.queueController.getControls();
+    if (
+      this.autoContinueEnabled &&
+      controlsAfterEnd.autoNextEnabled &&
+      controlsAfterEnd.repeatMode !== 'one' &&
+      controlsAfterEnd.repeatMode !== 'all' &&
+      !this.explicitStopped &&
+      !endedFromError &&
+      !endedIsRemote &&
+      !this.shouldBlockAutoContinueFn?.() &&
+      this.autoContinueResolver
+    ) {
+      const recentIds = this.queueController
+        .getState()
+        .history.slice(-15)
+        .map((e) => e.trackId);
+      const plan = this.autoContinueResolver({
+        lastTrackId: endedTrackId,
+        lastContext,
+        shuffleEnabled: controlsAfterEnd.shuffleEnabled,
+        recentTrackIds: endedTrackId && !recentIds.includes(endedTrackId) ? [...recentIds, endedTrackId] : recentIds,
+      });
+      if (endedGeneration !== this.playbackGeneration || !plan || plan.context.trackIds.length === 0) {
+        return;
+      }
+      const nextEntry = this.queueController.startAutoContinueContext(
+        plan.context,
+        plan.startTrackId,
+      );
+      if (nextEntry) {
+        await this.playQueueEntry(nextEntry, { fromAutoAdvance: true });
+      }
     }
   }
 
@@ -1487,7 +1885,12 @@ export class AudioEngine implements AudioEngineController {
     if (!this.currentTrackId) {
       return null;
     }
-    return this.trackCatalog.get(this.currentTrackId) ?? this.currentTrackSnapshot ?? null;
+    return (
+      this.trackCatalog.get(this.currentTrackId) ??
+      this.currentTrackSnapshot ??
+      this.externalTrackResolver?.getTrack(this.currentTrackId) ??
+      null
+    );
   }
 
   private buildSnapshot(): PlaybackState {

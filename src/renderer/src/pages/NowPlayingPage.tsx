@@ -33,6 +33,7 @@ import {
   VolumeX,
   X,
 } from 'lucide-react';
+import { isRemoteTrackId, parseRemoteTrackId } from '../../../shared/contracts/connect-api';
 import type { LyricsEncodingOption } from '../../../shared/types/stage5';
 import type {
   ResolvedTrackLyrics,
@@ -91,6 +92,7 @@ import {
   formatFileSize,
   formatTrackAudioSpecs,
 } from '../utils/formatters';
+import { resolveNowPlayingTitleTypography } from '../utils/title-typography';
 import { VinylSwapController, type VinylSwapSnapshot } from '../utils/vinyl-swap-controller';
 import { getVolumeSliderVisualState } from '../utils/volume-slider';
 
@@ -561,7 +563,36 @@ export function NowPlayingPage() {
 
   useEffect(() => {
     let cancelled = false;
-    if (localTrack && window.losslessApi) {
+    const remoteParsed = localTrack ? parseRemoteTrackId(localTrack.id) : null;
+    if (remoteParsed && window.losslessApi?.connectGetRemoteLyrics) {
+      setIsLoadingLyrics(true);
+      void window.losslessApi
+        .connectGetRemoteLyrics(remoteParsed.hostId, remoteParsed.trackId)
+        .then((res) => {
+          if (!cancelled) {
+            setResolvedLyrics(res);
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setResolvedLyrics({
+              trackId: localTrack!.id,
+              source: 'none',
+              format: 'none',
+              rawContent: '',
+              timedLines: [],
+              plainLines: [],
+              hasCustomLyrics: false,
+              sidecarPath: null,
+            });
+          }
+        })
+        .finally(() => {
+          if (!cancelled) {
+            setIsLoadingLyrics(false);
+          }
+        });
+    } else if (localTrack && !isRemoteTrackId(localTrack.id) && window.losslessApi) {
       setIsLoadingLyrics(true);
       void window.losslessApi
         .getTrackLyrics(localTrack.id)
@@ -698,9 +729,18 @@ export function NowPlayingPage() {
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
+  const heroTitleTypography = useMemo(
+    () => resolveNowPlayingTitleTypography(activeTitle, 'standard'),
+    [activeTitle],
+  );
+  const focusTitleTypography = useMemo(
+    () => resolveNowPlayingTitleTypography(activeTitle, 'focus'),
+    [activeTitle],
+  );
+
   useEffect(() => {
     setMeasuredTitleHeightPx(undefined);
-  }, [activeTitle, viewport.width]);
+  }, [activeTitle, viewport.width, isFocusMode, ui.preferences.editorialTypography.selectedFontId]);
 
   useEffect(() => {
     if (!isFocusMode || typeof ResizeObserver === 'undefined') {
@@ -720,7 +760,7 @@ export function NowPlayingPage() {
     const observer = new ResizeObserver(syncHeight);
     observer.observe(el);
     return () => observer.disconnect();
-  }, [isFocusMode, activeTitle]);
+  }, [isFocusMode, activeTitle, focusTitleTypography.fontSize, focusTitleTypography.lineHeight]);
 
   const placement = useMemo(
     () =>
@@ -1638,10 +1678,10 @@ export function NowPlayingPage() {
             <h1
               data-testid="now-playing-hero-title"
               title={activeTitle}
-              className="font-display line-clamp-2 font-semibold tracking-[-0.02em] text-[var(--np-text-primary)]"
+              className="font-display line-clamp-3 break-words pt-[0.06em] pb-[0.14em] font-semibold tracking-[-0.02em] text-[var(--np-text-primary)] [overflow-wrap:anywhere]"
               style={{
-                fontSize: 'clamp(26px, 2.35vw, 40px)',
-                lineHeight: 1.16,
+                fontSize: heroTitleTypography.fontSize,
+                lineHeight: heroTitleTypography.lineHeight,
               }}
             >
               {activeTitle}
@@ -1997,10 +2037,10 @@ export function NowPlayingPage() {
             ref={focusTitleRef}
             data-testid="focus-track-title"
             title={activeTitle}
-            className="font-display line-clamp-2 font-semibold tracking-[-0.026em]"
+            className="font-display line-clamp-3 break-words pt-[0.06em] pb-[0.14em] font-semibold tracking-[-0.024em] [overflow-wrap:anywhere]"
             style={{
-              fontSize: 'clamp(52px, 4.4vw, 84px)',
-              lineHeight: 1.06,
+              fontSize: focusTitleTypography.fontSize,
+              lineHeight: focusTitleTypography.lineHeight,
               color: adaptiveTheme.focusTextPrimary,
             }}
           >

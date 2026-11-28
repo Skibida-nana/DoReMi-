@@ -2,21 +2,21 @@
 setlocal EnableExtensions
 pushd "%~dp0.."
 
-title DoReMi v1.0.0-rc.2 - QA Launcher
+title DoReMi v1.0.0-rc.9 - QA Launcher
 
 echo ============================================================
-echo   DoReMi Windows v1.0.0-rc.2 - Release Candidate Launcher
+echo   DoReMi Windows v1.0.0-rc.9 - Release Candidate Launcher
 echo ============================================================
 echo.
-set "RC_PORTABLE=%CD%\release\v1.0.0-rc.2\DoReMi-1.0.0-rc.2-x64-portable.exe"
-set "RC_UNPACKED=%CD%\release\v1.0.0-rc.2\win-unpacked\DoReMi.exe"
+set "RC_PORTABLE=%CD%\release\v1.0.0-rc.9\DoReMi-1.0.0-rc.9-x64-portable.exe"
+set "RC_UNPACKED=%CD%\release\v1.0.0-rc.9\win-unpacked\DoReMi.exe"
 
 set "TARGET_EXE="
 if exist "%RC_UNPACKED%" set "TARGET_EXE=%RC_UNPACKED%"
 if not defined TARGET_EXE if exist "%RC_PORTABLE%" set "TARGET_EXE=%RC_PORTABLE%"
 
 if not defined TARGET_EXE (
-  echo [FAIL] Khong tim thay ban dong goi RC2 trong release\v1.0.0-rc.2\
+  echo [FAIL] Khong tim thay ban dong goi RC9 trong release\v1.0.0-rc.9\
   echo        Vui long chay Build Release Candidate truoc.
   pause
   popd

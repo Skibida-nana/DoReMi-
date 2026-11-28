@@ -9,8 +9,7 @@ export function AlbumDetailPage() {
   const library = useLibraryState();
   const isLight = ui.preferences.themeMode === 'light';
   const album = uiStore.getAlbumById(ui.selectedAlbumId);
-  const allTracks = uiStore.getUnifiedTracks();
-  const tracks = album ? allTracks.filter((t) => t.albumId === album.id) : [];
+  const tracks = album ? uiStore.getAlbumTracksSorted(album.id) : [];
   const totalSec = tracks.reduce((sum, t) => sum + t.durationSec, 0);
 
   if (!album || tracks.length === 0) {
@@ -143,8 +142,16 @@ export function AlbumDetailPage() {
       {/* Album Tracklist */}
       <section className="lp-glass-panel overflow-hidden rounded-[24px]">
         <div className="divide-y divide-[var(--border-subtle)]">
-          {tracks.map((track) => {
+          {tracks.map((track, idx) => {
             const isCurrent = ui.queueTrackIds[0] === track.id;
+            const displayTrackNum =
+              typeof track.trackNumber === 'number' && track.trackNumber > 0
+                ? track.trackNumber
+                : idx + 1;
+            const discPrefix =
+              typeof track.discNumber === 'number' && track.discNumber > 1
+                ? `${track.discNumber}.`
+                : '';
             return (
               <div
                 key={track.id}
@@ -161,8 +168,8 @@ export function AlbumDetailPage() {
                   isCurrent ? 'bg-[var(--surface-hover)]' : 'hover:bg-[var(--surface-glass-light)]'
                 }`}
               >
-                <span className="font-mono-tabular w-6 text-center text-[13px] text-[var(--text-muted)]">
-                  {track.trackNumber}
+                <span className="font-mono-tabular w-9 text-center text-[13px] text-[var(--text-muted)]">
+                  {discPrefix}{displayTrackNum}
                 </span>
                 <div className="min-w-0 flex-1">
                   <p

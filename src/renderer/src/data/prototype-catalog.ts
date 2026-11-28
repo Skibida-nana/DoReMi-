@@ -32,7 +32,7 @@ export interface PrototypeTrack {
   artist: string;
   albumTitle: string;
   albumArtist?: string | null;
-  trackNumber: number;
+  trackNumber: number | null;
   trackTotal?: number | null;
   discNumber?: number | null;
   discTotal?: number | null;

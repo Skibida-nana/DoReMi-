@@ -41,6 +41,8 @@ import type {
 import type { TrackMetadataOverrideInput } from '../../shared/types/track';
 import type { TrackRepository } from '../database/track-repository';
 import type { ArtworkService } from '../services/artwork-service';
+import type { ConnectClientService } from '../services/connect/connect-client';
+import type { ConnectHostService } from '../services/connect/host-service';
 import type { DiagnosticsService } from '../services/diagnostics-service';
 import type { LibraryService } from '../services/library-service';
 import type { LyricsService } from '../services/lyrics-service';
@@ -58,6 +60,8 @@ export interface RegisterIpcOptions {
   profileService: ProfileService;
   statisticsService: StatisticsService;
   diagnosticsService?: DiagnosticsService;
+  connectHostService?: ConnectHostService;
+  connectClientService?: ConnectClientService;
   trackRepo?: TrackRepository;
   databasePath: string;
   sqliteVersion?: string;
@@ -92,6 +96,8 @@ export function registerIpcHandlers(options: RegisterIpcOptions): void {
     profileService,
     statisticsService,
     diagnosticsService,
+    connectHostService,
+    connectClientService,
     trackRepo,
     databasePath,
   } = options;
@@ -148,7 +154,10 @@ export function registerIpcHandlers(options: RegisterIpcOptions): void {
       sqliteVersion: options.sqliteVersion ?? '3.x',
       releaseChannel: resolveReleaseChannel(appVersion),
       alacDecoderVersion: DOREMI_ALAC_DECODER_VERSION,
-      operatingMode: 'Offline Standalone (Zero Network)',
+      operatingMode:
+        connectHostService && connectHostService.getState() !== 'STOPPED'
+          ? 'Personal Hybrid Server (LAN Direct)'
+          : 'Offline Standalone (Host OFF)',
       platform: process.platform,
       databasePath,
     };
@@ -456,7 +465,7 @@ export function registerIpcHandlers(options: RegisterIpcOptions): void {
         return typeof val === 'string' ? val : null;
       };
 
-      return libraryService.updateTrackMetadataOverride(trackId, {
+      const updated = await libraryService.updateTrackMetadataOverride(trackId, {
         titleOverride: typeof inputObj.titleOverride === 'string' ? inputObj.titleOverride : null,
         artistOverride: typeof inputObj.artistOverride === 'string' ? inputObj.artistOverride : null,
         albumOverride: typeof inputObj.albumOverride === 'string' ? inputObj.albumOverride : null,
@@ -471,6 +480,8 @@ export function registerIpcHandlers(options: RegisterIpcOptions): void {
         lyricistOverride: strOrNull(inputObj.lyricistOverride),
         commentOverride: strOrNull(inputObj.commentOverride),
       });
+      connectHostService?.invalidateLibraryCache();
+      return updated;
     },
   );
 
@@ -478,7 +489,9 @@ export function registerIpcHandlers(options: RegisterIpcOptions): void {
     IPC_CHANNELS.METADATA_RESTORE_ORIGINAL,
     async (_event, rawTrackId: unknown) => {
       const trackId = assertValidTrackId(rawTrackId);
-      return libraryService.restoreTrackMetadataOriginal(trackId);
+      const restored = await libraryService.restoreTrackMetadataOriginal(trackId);
+      connectHostService?.invalidateLibraryCache();
+      return restored;
     },
   );
 
@@ -961,5 +974,359 @@ export function registerIpcHandlers(options: RegisterIpcOptions): void {
         return playlistService.setFavorites(trackIds, Boolean(rawFavorite));
       },
     );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Phase 6.1: DoReMi Connect (Personal Hybrid Server Host + LAN Direct Client)
+  // ---------------------------------------------------------------------------
+  if (connectHostService) {
+    connectHostService.subscribe((snapshot) => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) {
+          win.webContents.send(IPC_CHANNELS.CONNECT_HOST_STATE_CHANGED, snapshot);
+        }
+      }
+    });
+
+    ipcMain.handle(IPC_CHANNELS.CONNECT_HOST_GET_SNAPSHOT, () => {
+      return connectHostService.getSnapshot();
+    });
+
+    ipcMain.handle(IPC_CHANNELS.CONNECT_HOST_START, () => {
+      return connectHostService.start();
+    });
+
+    ipcMain.handle(IPC_CHANNELS.CONNECT_HOST_STOP, () => {
+      return connectHostService.stop();
+    });
+
+    ipcMain.handle(IPC_CHANNELS.CONNECT_HOST_UPDATE_CONFIG, (_event, rawPatch: unknown) => {
+      const obj = rawPatch && typeof rawPatch === 'object' ? (rawPatch as Record<string, unknown>) : {};
+      const rawPolicy = obj.powerPolicy;
+      const powerPolicy =
+        rawPolicy === 'follow-system' ||
+        rawPolicy === 'keep-awake-streaming' ||
+        rawPolicy === 'keep-awake-host-on'
+          ? rawPolicy
+          : undefined;
+      return connectHostService.updateConfig({
+        displayName: typeof obj.displayName === 'string' ? obj.displayName : undefined,
+        port: typeof obj.port === 'number' ? obj.port : undefined,
+        bindAddress: typeof obj.bindAddress === 'string' ? obj.bindAddress : undefined,
+        autoStart: typeof obj.autoStart === 'boolean' ? obj.autoStart : undefined,
+        maxActiveClients:
+          typeof obj.maxActiveClients === 'number' ? obj.maxActiveClients : undefined,
+        powerPolicy,
+      });
+    });
+
+    ipcMain.handle(IPC_CHANNELS.CONNECT_HOST_SET_POWER_POLICY, (_event, rawPolicy: unknown) => {
+      const policy =
+        rawPolicy === 'keep-awake-streaming' || rawPolicy === 'keep-awake-host-on'
+          ? rawPolicy
+          : 'follow-system';
+      return connectHostService.setPowerPolicy(policy);
+    });
+
+    ipcMain.handle(
+      IPC_CHANNELS.CONNECT_HOST_GET_RESOURCE_BREAKDOWN,
+      (_event, rawOpts?: unknown) => {
+        const obj =
+          rawOpts && typeof rawOpts === 'object' ? (rawOpts as Record<string, unknown>) : {};
+        return connectHostService.getResourceBreakdown({
+          includeTailscaleProcesses: Boolean(obj.includeTailscaleProcesses),
+        });
+      },
+    );
+
+    ipcMain.handle(IPC_CHANNELS.CONNECT_HOST_ADD_SHARED_SOURCE, (_event, rawRootId: unknown) => {
+      const rootId = assertValidUuid(rawRootId, 'rootId');
+      return connectHostService.addSharedSource(rootId);
+    });
+
+    ipcMain.handle(IPC_CHANNELS.CONNECT_HOST_REMOVE_SHARED_SOURCE, (_event, rawRootId: unknown) => {
+      const rootId = assertValidUuid(rawRootId, 'rootId');
+      return connectHostService.removeSharedSource(rootId);
+    });
+
+    ipcMain.handle(IPC_CHANNELS.CONNECT_HOST_CREATE_INVITATION, (_event, rawOpts?: unknown) => {
+      const obj = rawOpts && typeof rawOpts === 'object' ? (rawOpts as Record<string, unknown>) : {};
+      return connectHostService.createInvitation({
+        autoApproveSingleUse:
+          typeof obj.autoApproveSingleUse === 'boolean' ? obj.autoApproveSingleUse : false,
+      });
+    });
+
+    ipcMain.handle(IPC_CHANNELS.CONNECT_HOST_REVOKE_INVITATION, () => {
+      return connectHostService.revokeInvitation();
+    });
+
+    ipcMain.handle(IPC_CHANNELS.CONNECT_HOST_APPROVE_ENROLLMENT, (_event, rawReqId: unknown) => {
+      const requestId = assertValidUuid(rawReqId, 'requestId');
+      return connectHostService.approveEnrollment(requestId);
+    });
+
+    ipcMain.handle(IPC_CHANNELS.CONNECT_HOST_REJECT_ENROLLMENT, (_event, rawReqId: unknown) => {
+      const requestId = assertValidUuid(rawReqId, 'requestId');
+      return connectHostService.rejectEnrollment(requestId);
+    });
+
+    ipcMain.handle(
+      IPC_CHANNELS.CONNECT_HOST_RENAME_DEVICE,
+      (_event, rawDeviceId: unknown, rawName: unknown) => {
+        const deviceId = assertValidUuid(rawDeviceId, 'deviceId');
+        const name = typeof rawName === 'string' ? rawName : '';
+        return connectHostService.renameDevice(deviceId, name);
+      },
+    );
+
+    ipcMain.handle(IPC_CHANNELS.CONNECT_HOST_DISCONNECT_DEVICE, (_event, rawDeviceId: unknown) => {
+      const deviceId = assertValidUuid(rawDeviceId, 'deviceId');
+      return connectHostService.disconnectDevice(deviceId);
+    });
+
+    ipcMain.handle(IPC_CHANNELS.CONNECT_HOST_REVOKE_DEVICE, (_event, rawDeviceId: unknown) => {
+      const deviceId = assertValidUuid(rawDeviceId, 'deviceId');
+      return connectHostService.revokeDevice(deviceId);
+    });
+
+    ipcMain.handle(IPC_CHANNELS.CONNECT_HOST_REMOVE_DEVICE, (_event, rawDeviceId: unknown) => {
+      const deviceId = assertValidUuid(rawDeviceId, 'deviceId');
+      return connectHostService.removeDevice(deviceId);
+    });
+
+    ipcMain.handle(
+      IPC_CHANNELS.CONNECT_HOST_SET_DEVICE_REMOTE_ACCESS,
+      (_event, rawDeviceId: unknown, rawEnabled: unknown) => {
+        const deviceId = assertValidUuid(rawDeviceId, 'deviceId');
+        return connectHostService.setDeviceRemoteAccess(deviceId, Boolean(rawEnabled));
+      },
+    );
+
+    ipcMain.handle(IPC_CHANNELS.CONNECT_HOST_CHECK_REMOTE_PROVIDER, () => {
+      return connectHostService.checkRemoteProvider();
+    });
+
+    ipcMain.handle(IPC_CHANNELS.CONNECT_HOST_ENABLE_REMOTE_ACCESS, (_event, rawOpts?: unknown) => {
+      const obj = rawOpts && typeof rawOpts === 'object' ? (rawOpts as Record<string, unknown>) : {};
+      const rawPort = obj.preferredPublicPort;
+      const preferredPublicPort =
+        rawPort === 443 || rawPort === 8443 || rawPort === 10000 ? rawPort : undefined;
+      return connectHostService.enableRemoteAccess({
+        confirmPublicExposure: Boolean(obj.confirmPublicExposure),
+        preferredPublicPort,
+      });
+    });
+
+    ipcMain.handle(IPC_CHANNELS.CONNECT_HOST_DISABLE_REMOTE_ACCESS, () => {
+      return connectHostService.disableRemoteAccess();
+    });
+
+    ipcMain.handle(IPC_CHANNELS.CONNECT_HOST_ROTATE_IDENTITY, () => {
+      return connectHostService.rotateIdentity();
+    });
+  }
+
+  if (connectClientService) {
+    connectClientService.subscribe((snapshot) => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) {
+          win.webContents.send(IPC_CHANNELS.CONNECT_CLIENT_STATE_CHANGED, snapshot);
+        }
+      }
+    });
+
+    ipcMain.handle(IPC_CHANNELS.CONNECT_CLIENT_GET_SNAPSHOT, () => {
+      return connectClientService.getSnapshot();
+    });
+
+    ipcMain.handle(IPC_CHANNELS.CONNECT_CLIENT_DISCOVER, (_event, rawTimeoutMs?: unknown) => {
+      const timeoutMs =
+        typeof rawTimeoutMs === 'number' && Number.isFinite(rawTimeoutMs) ? rawTimeoutMs : 1500;
+      return connectClientService.discoverHosts(timeoutMs);
+    });
+
+    ipcMain.handle(
+      IPC_CHANNELS.CONNECT_CLIENT_PROBE_HOST,
+      (_event, rawAddress: unknown, rawPort: unknown) => {
+        const address = typeof rawAddress === 'string' ? rawAddress : '';
+        const port = typeof rawPort === 'number' ? rawPort : Number(rawPort);
+        return connectClientService.probeHost(address, port);
+      },
+    );
+
+    ipcMain.handle(IPC_CHANNELS.CONNECT_CLIENT_ENROLL, (_event, rawInput: unknown) => {
+      if (!rawInput || typeof rawInput !== 'object') {
+        throw new Error('Thông tin ghép nối không hợp lệ.');
+      }
+      const obj = rawInput as Record<string, unknown>;
+      return connectClientService.enrollWithHost({
+        address: typeof obj.address === 'string' ? obj.address : '',
+        port: typeof obj.port === 'number' ? obj.port : Number(obj.port),
+        expectedFingerprintSha256:
+          typeof obj.expectedFingerprintSha256 === 'string' ? obj.expectedFingerprintSha256 : '',
+        inviteCode: typeof obj.inviteCode === 'string' ? obj.inviteCode : '',
+        deviceName: typeof obj.deviceName === 'string' ? obj.deviceName : 'DoReMi Windows Client',
+      });
+    });
+
+    ipcMain.handle(IPC_CHANNELS.CONNECT_CLIENT_ENROLL_PAYLOAD, (_event, rawInput: unknown) => {
+      if (!rawInput || typeof rawInput !== 'object') {
+        throw new Error('Dữ liệu mã ghép nối không hợp lệ.');
+      }
+      const obj = rawInput as Record<string, unknown>;
+      return connectClientService.enrollFromPairingPayload({
+        rawPayload: typeof obj.rawPayload === 'string' ? obj.rawPayload : '',
+        deviceName: typeof obj.deviceName === 'string' ? obj.deviceName : 'DoReMi Windows Client',
+      });
+    });
+
+    ipcMain.handle(IPC_CHANNELS.CONNECT_CLIENT_ROTATE_TOKEN, () => {
+      return connectClientService.rotateActiveHostCredential();
+    });
+
+    ipcMain.handle(
+      IPC_CHANNELS.CONNECT_CLIENT_CONNECT,
+      (
+        _event,
+        rawHostId: unknown,
+        rawAddress?: unknown,
+        rawPort?: unknown,
+        rawExplicitMode?: unknown,
+      ) => {
+        const hostId = assertValidUuid(rawHostId, 'hostId');
+        const addr = typeof rawAddress === 'string' ? rawAddress : undefined;
+        const port =
+          typeof rawPort === 'number' && Number.isInteger(rawPort) ? rawPort : undefined;
+        const explicitMode =
+          rawExplicitMode === 'remote-https'
+            ? 'remote-https'
+            : rawExplicitMode === 'lan-direct'
+              ? 'lan-direct'
+              : undefined;
+        return connectClientService.connectToRememberedHost(hostId, addr, port, explicitMode);
+      },
+    );
+
+    ipcMain.handle(
+      IPC_CHANNELS.CONNECT_CLIENT_SYNC_REMOTE_ACCESS,
+      (_event, rawHostId: unknown) => {
+        const hostId = assertValidUuid(rawHostId, 'hostId');
+        return connectClientService.syncRemoteAccessOverLan(hostId);
+      },
+    );
+
+    ipcMain.handle(
+      IPC_CHANNELS.CONNECT_CLIENT_SET_PREFERRED_TRANSPORT,
+      (_event, rawHostId: unknown, rawMode: unknown) => {
+        const hostId = assertValidUuid(rawHostId, 'hostId');
+        const mode = rawMode === 'remote-https' ? 'remote-https' : 'lan-direct';
+        return connectClientService.setPreferredTransport(hostId, mode);
+      },
+    );
+
+    ipcMain.handle(
+      IPC_CHANNELS.CONNECT_CLIENT_SET_CONNECTION_MODE,
+      (_event, rawHostId: unknown, rawMode: unknown) => {
+        const hostId = assertValidUuid(rawHostId, 'hostId');
+        const mode =
+          rawMode === 'automatic' || rawMode === 'remote-only' ? rawMode : 'lan-only';
+        return connectClientService.setConnectionMode(hostId, mode);
+      },
+    );
+
+    ipcMain.handle(IPC_CHANNELS.CONNECT_CLIENT_MANUAL_RECONNECT, () => {
+      return connectClientService.manualReconnect();
+    });
+
+    ipcMain.handle(IPC_CHANNELS.CONNECT_CLIENT_NOTIFY_NETWORK_HINT, (_event, rawHint: unknown) => {
+      const hint = rawHint === 'online' || rawHint === 'offline' ? rawHint : 'recheck';
+      connectClientService.notifyNetworkHint(hint);
+      return { ok: true };
+    });
+
+    ipcMain.handle(IPC_CHANNELS.CONNECT_CLIENT_VERIFY_TRACK_SOURCE, (_event, rawParams: unknown) => {
+      const obj = rawParams && typeof rawParams === 'object' ? (rawParams as Record<string, unknown>) : {};
+      const hostId = assertValidUuid(obj.hostId, 'hostId');
+      const trackId = assertValidTrackId(obj.trackId);
+      return connectClientService.verifyTrackSourceConsistency({
+        hostId,
+        trackId,
+        expectedFileSize: typeof obj.expectedFileSize === 'number' ? obj.expectedFileSize : null,
+        expectedSourceRevision:
+          typeof obj.expectedSourceRevision === 'string' ? obj.expectedSourceRevision : null,
+      });
+    });
+
+    ipcMain.handle(
+      IPC_CHANNELS.CONNECT_CLIENT_RECORD_HANDOVER_OUTCOME,
+      (_event, rawParams: unknown) => {
+        const obj =
+          rawParams && typeof rawParams === 'object'
+            ? (rawParams as Record<string, unknown>)
+            : {};
+        if (typeof obj.handoverSeq === 'number' && Number.isSafeInteger(obj.handoverSeq)) {
+          connectClientService.recordHandoverPlaybackOutcome({
+            handoverSeq: obj.handoverSeq,
+            positionBeforeSec:
+              typeof obj.positionBeforeSec === 'number' ? obj.positionBeforeSec : null,
+            positionAfterSec:
+              typeof obj.positionAfterSec === 'number' ? obj.positionAfterSec : null,
+          });
+        }
+        return { ok: true };
+      },
+    );
+
+    ipcMain.handle(IPC_CHANNELS.CONNECT_CLIENT_DISCONNECT, () => {
+      return connectClientService.disconnect();
+    });
+
+    ipcMain.handle(IPC_CHANNELS.CONNECT_CLIENT_REMOVE_REMEMBERED, (_event, rawHostId: unknown) => {
+      const hostId = assertValidUuid(rawHostId, 'hostId');
+      return connectClientService.removeRememberedHost(hostId);
+    });
+
+    ipcMain.handle(IPC_CHANNELS.CONNECT_CLIENT_LIST_TRACKS, (_event, rawOpts?: unknown) => {
+      const obj = rawOpts && typeof rawOpts === 'object' ? (rawOpts as Record<string, unknown>) : {};
+      return connectClientService.listRemoteTracks({
+        offset: typeof obj.offset === 'number' ? obj.offset : undefined,
+        limit: typeof obj.limit === 'number' ? obj.limit : undefined,
+        query: typeof obj.query === 'string' ? obj.query : undefined,
+        albumKey: typeof obj.albumKey === 'string' ? obj.albumKey : undefined,
+        artist: typeof obj.artist === 'string' ? obj.artist : undefined,
+      });
+    });
+
+    ipcMain.handle(IPC_CHANNELS.CONNECT_CLIENT_LIST_ALBUMS, (_event, rawOpts?: unknown) => {
+      const obj = rawOpts && typeof rawOpts === 'object' ? (rawOpts as Record<string, unknown>) : {};
+      return connectClientService.listRemoteAlbums({
+        offset: typeof obj.offset === 'number' ? obj.offset : undefined,
+        limit: typeof obj.limit === 'number' ? obj.limit : undefined,
+        query: typeof obj.query === 'string' ? obj.query : undefined,
+      });
+    });
+
+    ipcMain.handle(IPC_CHANNELS.CONNECT_CLIENT_LIST_ARTISTS, (_event, rawOpts?: unknown) => {
+      const obj = rawOpts && typeof rawOpts === 'object' ? (rawOpts as Record<string, unknown>) : {};
+      return connectClientService.listRemoteArtists({
+        offset: typeof obj.offset === 'number' ? obj.offset : undefined,
+        limit: typeof obj.limit === 'number' ? obj.limit : undefined,
+        query: typeof obj.query === 'string' ? obj.query : undefined,
+      });
+    });
+
+    ipcMain.handle(
+      IPC_CHANNELS.CONNECT_CLIENT_GET_LYRICS,
+      (_event, rawHostId: unknown, rawTrackId: unknown) => {
+        const hostId = assertValidUuid(rawHostId, 'hostId');
+        const trackId = assertValidTrackId(rawTrackId);
+        return connectClientService.getRemoteLyrics(hostId, trackId);
+      },
+    );
+
+    ipcMain.handle(IPC_CHANNELS.CONNECT_CLIENT_GET_DIAGNOSTICS, () => {
+      return connectClientService.getClientDiagnosticsSnapshot();
+    });
   }
 }

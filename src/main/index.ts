@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { app, BrowserWindow, dialog, session } from 'electron';
+import { app, BrowserWindow, dialog, powerMonitor, session } from 'electron';
 import { ArtworkRepository } from './database/artwork-repository';
 import { openLibraryDatabase, type DatabaseConnection } from './database/connection';
 import { ExclusionRepository } from './database/exclusion-repository';
@@ -22,6 +22,10 @@ import { LyricsService } from './services/lyrics-service';
 import { PlaylistService } from './services/playlist-service';
 import { ProfileService } from './services/profile-service';
 import { StatisticsService } from './services/statistics-service';
+import { ConnectClientService } from './services/connect/connect-client';
+import { ConnectRepository } from './services/connect/connect-repository';
+import { ConnectHostService } from './services/connect/host-service';
+import { ConnectSecretStorage } from './services/connect/secret-storage';
 import {
   createCrashRecoveryLimiter,
   formatUnexpectedErrorDetail,
@@ -58,6 +62,8 @@ registerPrivilegedAudioScheme();
 let dbConnection: DatabaseConnection | null = null;
 let diagnosticsService: DiagnosticsService | null = null;
 let activeLibraryService: LibraryService | null = null;
+let activeConnectHostService: ConnectHostService | null = null;
+let activeConnectClientService: ConnectClientService | null = null;
 let mainWindow: BrowserWindow | null = null;
 const rendererRecoveryLimiter = createCrashRecoveryLimiter(15_000);
 
@@ -223,6 +229,31 @@ function initializeApplication(): void {
   });
   activeLibraryService = libraryService;
 
+  const connectRepo = new ConnectRepository(dbConnection.db);
+  const connectSecrets = new ConnectSecretStorage({ userDataDir });
+  const connectHostService = new ConnectHostService({
+    appVersion: app.getVersion(),
+    userDataDir,
+    connectRepo,
+    trackRepo,
+    artworkService,
+    lyricsService,
+    secrets: connectSecrets,
+  });
+  const connectClientService = new ConnectClientService({
+    connectRepo,
+    secrets: connectSecrets,
+  });
+  activeConnectHostService = connectHostService;
+  activeConnectClientService = connectClientService;
+
+  powerMonitor.on('suspend', () => {
+    activeConnectClientService?.handleSystemSuspend();
+  });
+  powerMonitor.on('resume', () => {
+    activeConnectClientService?.handleSystemResume();
+  });
+
   // Enforce strict offline CSP header on all loaded renderer documents
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     if (details.resourceType === 'mainFrame') {
@@ -248,6 +279,7 @@ function initializeApplication(): void {
     artworkService,
     playlistService,
     profileService,
+    connectClientService,
     onDiagnostic: (entry) => {
       diagnosticsService?.record(entry);
     },
@@ -268,6 +300,8 @@ function initializeApplication(): void {
     profileService,
     statisticsService,
     diagnosticsService,
+    connectHostService,
+    connectClientService,
     trackRepo,
     databasePath,
     sqliteVersion: dbConnection.sqliteVersion,
@@ -393,9 +427,152 @@ function initializeApplication(): void {
             throw new Error(`Invalid smoke probe state: ${JSON.stringify(probe)}`);
           }
 
+          let extendedReport: Record<string, unknown> | null = null;
+          if (process.env.DOREMI_SMOKE_EXTENDED === '1') {
+            const sampleAudioFile = process.env.DOREMI_SMOKE_AUDIO_FILE || '';
+            const phaseMode = process.env.DOREMI_SMOKE_PHASE || 'boot1';
+            if (phaseMode === 'boot1' && sampleAudioFile && activeLibraryService) {
+              await activeLibraryService.importFolder(path.dirname(sampleAudioFile));
+            }
+            extendedReport = (await mainWindow.webContents.executeJavaScript(`
+              (async () => {
+                const api = window.losslessApi;
+                const mode = ${JSON.stringify(phaseMode)};
+
+                if (mode === 'boot2_verify_persistence') {
+                  const libSnap = await api.getLibrarySnapshot();
+                  const hostSnap = await api.connectGetHostSnapshot();
+                  const clientSnap = await api.connectGetClientSnapshot();
+                  return {
+                    mode,
+                    persistedTrackCount: libSnap.tracks.length,
+                    persistedPowerPolicy: hostSnap.power.policy,
+                    persistedAuthorizedDevices: hostSnap.authorizedDevices.length,
+                    persistedRememberedHosts: clientSnap.rememberedHosts.length,
+                  };
+                }
+
+                const verifyAudioCanPlay = (src) =>
+                  new Promise((resolve, reject) => {
+                    const el = new Audio();
+                    el.preload = 'auto';
+                    el.muted = true;
+                    const t = setTimeout(() => {
+                      el.removeAttribute('src');
+                      el.load();
+                      reject(new Error('Audio canplay timeout for ' + src));
+                    }, 8000);
+                    el.addEventListener(
+                      'canplay',
+                      () => {
+                        clearTimeout(t);
+                        const info = { duration: el.duration, readyState: el.readyState };
+                        el.pause();
+                        el.removeAttribute('src');
+                        el.load();
+                        resolve(info);
+                      },
+                      { once: true },
+                    );
+                    el.addEventListener(
+                      'error',
+                      () => {
+                        clearTimeout(t);
+                        const code = el.error ? el.error.code : -1;
+                        el.removeAttribute('src');
+                        el.load();
+                        reject(new Error('Audio element error code=' + code + ' for ' + src));
+                      },
+                      { once: true },
+                    );
+                    el.src = src;
+                    el.load();
+                  });
+
+                // 1. Local import + local lossless-media:// real Chromium <audio> playback verification
+                const libSnap = await api.getLibrarySnapshot();
+                const tracks = libSnap.tracks;
+                if (!tracks.length) {
+                  throw new Error('Expected imported local track in packaged smoke verification.');
+                }
+                const localTrack = tracks[0];
+                const localAudio = await verifyAudioCanPlay(
+                  'lossless-media://track/' + encodeURIComponent(localTrack.id),
+                );
+
+                // 2. Power policies + Host start/stop + real Electron powerSaveBlocker verification
+                const initHost = await api.connectGetHostSnapshot();
+                await api.connectUpdateHostConfig({ bindAddress: '127.0.0.1', port: 0 });
+                await api.connectStartHost();
+                const polHostOn = await api.connectSetHostPowerPolicy('keep-awake-host-on');
+                const polFollow = await api.connectSetHostPowerPolicy('follow-system');
+                await api.connectSetHostPowerPolicy('keep-awake-streaming');
+
+                // 3. Shared source + LAN Direct pairing + Remote Track real Chromium <audio> streaming + Streaming Keep-Awake
+                const roots = libSnap.roots;
+                if (roots.length > 0) {
+                  await api.connectAddSharedSource(roots[0].id);
+                }
+                const hostAfterSource = await api.connectGetHostSnapshot();
+                const port = hostAfterSource.listeningPort;
+                const hostId = hostAfterSource.identity.hostId;
+                const probed = await api.connectProbeHost('127.0.0.1', port);
+                const inv = await api.connectCreateInvitation({ autoApproveSingleUse: true });
+                await api.connectEnrollWithHost({
+                  address: '127.0.0.1',
+                  port,
+                  expectedFingerprintSha256: probed.observedFingerprintSha256,
+                  inviteCode: inv.inviteCode,
+                  deviceName: 'Packaged RC9 Verifier',
+                });
+                const remoteLib = await api.connectListRemoteTracks({ offset: 0, limit: 10 });
+                if (!remoteLib.items.length) {
+                  throw new Error('Expected shared remote track from packaged Host.');
+                }
+                const rTrack = remoteLib.items[0];
+                const remoteUrl =
+                  'lossless-media://remote-track/' +
+                  String(hostId).toLowerCase() +
+                  '/' +
+                  String(rTrack.trackId).toLowerCase();
+                const remoteAudio = await verifyAudioCanPlay(remoteUrl);
+                const hostDuringGrace = await api.connectGetHostSnapshot();
+                const breakdown = await api.connectGetHostResourceBreakdown({ includeTailscaleProcesses: false });
+
+                // 4. Connection recovery + clean disconnect + Host stop releases blocker & streams
+                await api.connectToRememberedHost(hostId);
+                const clientReconnected = await api.connectGetClientSnapshot();
+                await api.connectDisconnectClient();
+                const clientDisconnected = await api.connectGetClientSnapshot();
+                const stoppedHost = await api.connectStopHost();
+
+                return {
+                  mode,
+                  localCanPlay: localAudio.readyState >= 3 && localAudio.duration > 2,
+                  localDurationSec: Number(localAudio.duration.toFixed(2)),
+                  defaultPowerPolicy: initHost.power.policy,
+                  blockerDuringHostOnPolicy: polHostOn.power.blockerActive,
+                  blockerDuringFollowPolicy: polFollow.power.blockerActive,
+                  blockerDuringStreamGrace: hostDuringGrace.power.blockerActive || hostDuringGrace.power.gracePeriodActive,
+                  remoteCanPlay: remoteAudio.readyState >= 3 && remoteAudio.duration > 2,
+                  remoteDurationSec: Number(remoteAudio.duration.toFixed(2)),
+                  durationsMatch: Math.abs(localAudio.duration - remoteAudio.duration) < 0.05,
+                  resourceBreakdownSampled: breakdown.mainProcess.rssBytes > 0,
+                  reconnectedState: clientReconnected.smartState || clientReconnected.status,
+                  disconnectedState: clientDisconnected.status,
+                  stoppedState: stoppedHost.state,
+                  stoppedBlockerActive: stoppedHost.power.blockerActive,
+                  stoppedActiveStreams: stoppedHost.activeSessions.length,
+                };
+              })()
+            `)) as Record<string, unknown>;
+          }
+
           clearTimeout(smokeTimer);
-          writeSmokeResult({ ok: true, isPackaged: app.isPackaged, ...probe });
+          writeSmokeResult({ ok: true, isPackaged: app.isPackaged, ...probe, extendedReport });
           console.log('DOREMI_SMOKE_OK');
+          await activeConnectClientService?.shutdown().catch(() => {});
+          await activeConnectHostService?.dispose().catch(() => {});
           await diagnosticsService?.flush();
           disposeSharedAlacStreamManager();
           dbConnection?.close();
@@ -433,6 +610,10 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   activeLibraryService?.cancelActiveScan();
   activeLibraryService = null;
+  void activeConnectHostService?.dispose().catch(() => {});
+  void activeConnectClientService?.shutdown().catch(() => {});
+  activeConnectHostService = null;
+  activeConnectClientService = null;
   void diagnosticsService?.flush();
   disposeSharedAlacStreamManager();
   dbConnection?.close();

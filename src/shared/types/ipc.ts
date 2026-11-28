@@ -233,4 +233,119 @@ export interface LosslessDesktopApi {
   getStreamingTranscodingPlans?(
     trackId?: string,
   ): Promise<import('./codec-engine').StreamingTranscodePlan[]>;
+
+  // Phase 6.1: DoReMi Connect (Personal Hybrid Server Host + LAN Direct Client)
+  connectGetHostSnapshot?(): Promise<import('./connect').HostSnapshot>;
+  connectStartHost?(): Promise<import('./connect').HostSnapshot>;
+  connectStopHost?(): Promise<import('./connect').HostSnapshot>;
+  connectUpdateHostConfig?(patch: {
+    displayName?: string;
+    port?: number;
+    bindAddress?: string;
+    autoStart?: boolean;
+    maxActiveClients?: number;
+    powerPolicy?: import('./connect').HostPowerPolicy;
+  }): Promise<import('./connect').HostSnapshot>;
+  connectSetHostPowerPolicy?(
+    policy: import('./connect').HostPowerPolicy,
+  ): Promise<import('./connect').HostSnapshot>;
+  connectGetHostResourceBreakdown?(options?: {
+    includeTailscaleProcesses?: boolean;
+  }): Promise<import('./connect').ScopedHostResourceBreakdown>;
+  connectAddSharedSource?(rootId: string): Promise<import('./connect').HostSnapshot>;
+  connectRemoveSharedSource?(rootId: string): Promise<import('./connect').HostSnapshot>;
+  connectCreateInvitation?(options?: {
+    autoApproveSingleUse?: boolean;
+  }): Promise<import('./connect').EnrollmentInvitationSummary>;
+  connectRevokeInvitation?(): Promise<import('./connect').HostSnapshot>;
+  connectApproveEnrollment?(requestId: string): Promise<import('./connect').HostSnapshot>;
+  connectRejectEnrollment?(requestId: string): Promise<import('./connect').HostSnapshot>;
+  connectRenameDevice?(deviceId: string, displayName: string): Promise<import('./connect').HostSnapshot>;
+  connectDisconnectDevice?(deviceId: string): Promise<import('./connect').HostSnapshot>;
+  connectRevokeDevice?(deviceId: string): Promise<import('./connect').HostSnapshot>;
+  connectRemoveDevice?(deviceId: string): Promise<import('./connect').HostSnapshot>;
+  connectSetDeviceRemoteAccess?(deviceId: string, enabled: boolean): Promise<import('./connect').HostSnapshot>;
+  connectCheckRemoteProvider?(): Promise<import('./connect').HostSnapshot>;
+  connectEnableRemoteAccess?(options?: {
+    confirmPublicExposure?: boolean;
+    preferredPublicPort?: 443 | 8443 | 10000;
+  }): Promise<import('./connect').HostSnapshot>;
+  connectDisableRemoteAccess?(): Promise<import('./connect').HostSnapshot>;
+  connectRotateHostIdentity?(): Promise<import('./connect').HostSnapshot>;
+  onConnectHostStateChanged?(
+    callback: (snapshot: import('./connect').HostSnapshot) => void,
+  ): () => void;
+
+  connectGetClientSnapshot?(): Promise<import('./connect').ConnectClientSnapshot>;
+  connectDiscoverHosts?(timeoutMs?: number): Promise<import('./connect').DiscoveredHostRecord[]>;
+  connectProbeHost?(address: string, port: number): Promise<import('./connect').HostProbeResult>;
+  connectEnrollWithHost?(input: {
+    address: string;
+    port: number;
+    expectedFingerprintSha256: string;
+    inviteCode: string;
+    deviceName: string;
+  }): Promise<import('./connect').ConnectClientSnapshot>;
+  connectEnrollFromPairingPayload?(input: {
+    rawPayload: string;
+    deviceName: string;
+  }): Promise<import('./connect').ConnectClientSnapshot>;
+  connectToRememberedHost?(
+    hostId: string,
+    overrideAddress?: string,
+    overridePort?: number,
+    explicitMode?: import('./connect').ConnectTransportMode,
+  ): Promise<import('./connect').ConnectClientSnapshot>;
+  connectSyncRemoteAccess?(hostId: string): Promise<import('./connect').ConnectClientSnapshot>;
+  connectSetPreferredTransport?(
+    hostId: string,
+    mode: import('./connect').ConnectTransportMode,
+  ): Promise<import('./connect').ConnectClientSnapshot>;
+  connectSetConnectionMode?(
+    hostId: string,
+    mode: import('./connect').ConnectionSelectionMode,
+  ): Promise<import('./connect').ConnectClientSnapshot>;
+  connectManualReconnect?(): Promise<import('./connect').ConnectClientSnapshot>;
+  connectNotifyNetworkHint?(hint: 'online' | 'offline' | 'recheck'): Promise<{ ok: boolean }>;
+  connectVerifyTrackSource?(params: {
+    hostId: string;
+    trackId: string;
+    expectedFileSize?: number | null;
+    expectedSourceRevision?: string | null;
+  }): Promise<{
+    ok: boolean;
+    sourceConsistent: boolean;
+    missingOrUnshared: boolean;
+    updatedTrack: import('./connect').RemoteTrackDto | null;
+  }>;
+  connectRecordHandoverOutcome?(params: {
+    handoverSeq: number;
+    positionBeforeSec: number | null;
+    positionAfterSec: number | null;
+  }): Promise<{ ok: boolean }>;
+  connectRotateHostToken?(): Promise<import('./connect').ConnectClientSnapshot>;
+  connectDisconnectClient?(): Promise<import('./connect').ConnectClientSnapshot>;
+  connectRemoveRememberedHost?(hostId: string): Promise<import('./connect').ConnectClientSnapshot>;
+  connectListRemoteTracks?(options?: {
+    offset?: number;
+    limit?: number;
+    query?: string;
+    albumKey?: string;
+    artist?: string;
+  }): Promise<import('./connect').RemoteLibraryPage<import('./connect').RemoteTrackDto>>;
+  connectListRemoteAlbums?(options?: {
+    offset?: number;
+    limit?: number;
+    query?: string;
+  }): Promise<import('./connect').RemoteLibraryPage<import('./connect').RemoteAlbumDto>>;
+  connectListRemoteArtists?(options?: {
+    offset?: number;
+    limit?: number;
+    query?: string;
+  }): Promise<import('./connect').RemoteLibraryPage<import('./connect').RemoteArtistDto>>;
+  connectGetRemoteLyrics?(hostId: string, trackId: string): Promise<ResolvedTrackLyrics>;
+  connectGetClientDiagnostics?(): Promise<import('./connect').ClientDiagnosticsSnapshot>;
+  onConnectClientStateChanged?(
+    callback: (snapshot: import('./connect').ConnectClientSnapshot) => void,
+  ): () => void;
 }

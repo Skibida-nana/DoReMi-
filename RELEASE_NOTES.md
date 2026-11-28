@@ -1,28 +1,24 @@
-# DoReMi Windows — Release Notes (`1.0.0-rc.2`)
+# DoReMi Windows — Release Notes (`1.0.0-rc.9`)
 
-**Trạng thái**: `RELEASE CANDIDATE - PENDING UAT`  
-**Loại phát hành**: Desktop Music Player Standalone (100% Offline, Windows x64) · **Developed by `kamisamao`**
-
----
-
-## Điểm mới trong Release Candidate `1.0.0-rc.2` (Phase 5.2.1)
-
-1. **Tinh chỉnh trải nghiệm Thư viện (`5.2.1A`)**:
-   - Nút nổi **"Về đầu trang"** (`ArrowUp`, `40×40px`, tooltip `"Về đầu trang"`) ở góc dưới phải vùng nội dung Library (trên `MiniPlayer`, dưới Modals/`QueueDrawer`), chỉ xuất hiện khi cuộn sâu (`420–600px`), hỗ trợ `prefers-reduced-motion` và giữ nguyên tab, bộ lọc, tìm kiếm, virtualization & phát nhạc.
-   - Nút **"+ Tạo playlist"** ngay trên thanh công cụ Thư viện across mọi tab, kiểm tra chống trùng tên NFC/NFD tiếng Việt, chặn tên rỗng/quá dài (`> 80` ký tự), chống double-click và có checkbox xác nhận rõ ràng khi người dùng đang chọn nhiều bài hát.
-2. **Đồng nhất Sidebar Focus Player (`5.2.1B`)**:
-   - Khi chuyển đổi qua lại giữa **Focus Vinyl** và **Chế độ Chuẩn / Lyrics** trong Màn hình Đang phát, thanh Sidebar giữ nguyên trạng thái ẩn đồng nhất (không tự bật lại 3 giây gây lệch nút Quay lại), đồng thời vẫn mở nhanh bằng `Alt+M` hoặc rê chuột mép trái `12px` và khôi phục Sidebar cố định khi rời trang phát nhạc.
-3. **Trang Giới thiệu & Bản sắc nhà phát triển (`5.2.1C`)**:
-   - Mục **Cài đặt → Giới thiệu** (lazy-loaded `27.14 kB`) hiển thị nhận diện `DoReMi`, `Designed & Developed by kamisamao`, câu chuyện & triết lý thiết kế (`"Built with passion. Designed for music lovers."`), thông số phiên bản động (`app.getVersion()`), SQLite version thực tế, và mô tả trung thực kiến trúc **Audio Engine (`HTMLAudioElement` + Web Audio `AudioDspGraph`)**, **Decoder (`Chromium Media Pipeline` + `@mgz-dev/alac 0.1.1` WASM)** cùng **Codec Engine tách biệt (`Isolated`, không đóng gói FFmpeg ngoài)** với nút kiểm tra tùy chọn on-demand.
-4. **Hướng dẫn sử dụng tích hợp 100% Offline (`5.2.1D`)**:
-   - Mục **Cài đặt → Hướng dẫn sử dụng** (lazy-loaded `37.46 kB`) gồm **15 chương** chính xác theo tính năng thực tế, Mục lục nhanh, đóng/mở từng chương, tìm kiếm tiếng Việt hỗ trợ cả có dấu lẫn không dấu, đồng bộ 1 nguồn duy nhất với [`docs/USER_GUIDE.md`](file:///G:/Source%20code%20DoReMi/docs/USER_GUIDE.md).
-5. **Tối ưu & Kiểm chứng Đóng gói (`5.2.1E`)**:
-   - Main renderer bundle giữ gọn ở **`675.38 kB`** (giảm nhẹ so với `680.95 kB` ở RC1 nhờ lazy chunk cho About, Guide và CodecManager).
-   - Bộ kiểm thử tự động Electron: **`191 tests: 189 PASS, 0 FAIL, 2 platform-env EPERM SKIP`** (`6,252.32 ms`), Smoke Test PASS trên cả bản Dev và Packaged `release/v1.0.0-rc.2/win-unpacked/DoReMi.exe`, **`0` prod dependency CVEs** (`23` prod deps).
+**Trạng thái**: `RELEASE CANDIDATE - AUTOMATED RESOURCE, POWER & SOAK VERIFIED · PHYSICAL MULTI-DEVICE UAT PENDING`  
+**Loại phát hành**: Test Build (`1.0.0-rc.9`) trên nền `1.0.0-rc.8` · **Developed by `kamisamao`**
 
 ---
 
-## Điểm cốt lõi được bảo toàn từ `1.0.0-rc.1`
+## Nâng cấp trong `1.0.0-rc.9` (Phase 6.5 — Quản lý Tài nguyên, Nguồn điện Windows & Ổn định Máy chủ Chạy dài)
 
-- **Phát nhạc Lossless / Hi-Res chuẩn xác**: FLAC (`flac-stream-sanitizer`), M4A/ALAC (`@mgz-dev/alac` WASM streamed PCM WAV có HTTP 206 seeking), WAV, MP3, AAC, OGG, Opus; `AudioDspGraph` 10-band Graphic / 8-band Parametric EQ, ReplayGain, Auto Headroom, Audible Scrubbing, True Shuffle `#59`, Queue Restoration.
-- **Ổn định & Bảo mật**: Global resilience handlers (`<= 512 KB` rotating crash logs), `<AppErrorBoundary>`, `PRAGMA integrity_check` + `foreign_key_check`, WAL-safe `db.backup()`, `sandbox: true`, `contextIsolation: true`, `nodeIntegration: false`, strict CSP `0` network/telemetry, lưu trữ cố định tại `%APPDATA%\Lossless Player`.
+1. **Tối ưu hóa tài nguyên thực tế cho cả Local Player, Host và Client**:
+   - **Tái sử dụng kết nối Scoped HTTP/HTTPS Keep-Alive**: Cách ly tuyệt đối theo từng `(hostId, transport, chứng chỉ)`, xác minh lại SPKI SHA-256 trên cả kết nối tái sử dụng, giảm **64,8%** kết nối TCP LAN mới (`108 -> 38`) và **81,5%** bắt tay TLS Remote (`108 -> 20`) trên bộ benchmark 25 kịch bản, đồng thời bảo toàn luồng nhạc tạm dừng trên 30 giây.
+   - **Giảm 93,9% lượt ghi SQLite lặp lại khi stream (`165 -> 10`)**: Gom nhịp cập nhật `last_activity_at` (`30 giây/lần`) và bộ đệm xác thực thiết bị `10 giây` (tự xóa tức thì khi thu hồi quyền hoặc xoay vòng token).
+   - **Quản lý vòng đời bộ đệm & giải mã ALAC/FLAC**: Không giữ con trỏ bộ nhớ WASM sau khi giải mã cửa sổ PCM ALAC, tự dọn cửa sổ nghỉ sau `20 giây` / chỉ mục sau `60 giây`, gộp yêu cầu ảnh bìa/lời bài hát trùng lặp (`inflight deduplication`), và tự xóa khóa riêng khỏi RAM khi tắt Host (`STOPPED`).
+2. **Quản lý nguồn điện Windows tường minh (`HostPowerManager`) & Xử lý Ngủ/Thức an toàn**:
+   - Cung cấp 3 chế độ lưu bền vững trên trang **Server**:
+     - **`Theo hệ thống` (`follow-system` — Mặc định)**: Tôn trọng hoàn toàn cài đặt Sleep của Windows, không giữ thức ngầm.
+     - **`Giữ thức khi đang phát từ xa` (`keep-awake-streaming`)**: Chỉ ngăn máy ngủ (`prevent-app-suspension`) khi có thiết bị được phép đang phát nhạc thực sự (kèm `45 giây` đệm chuyển bài), tự nhả ngay khi dừng phát, ngắt kết nối hoặc thu hồi quyền.
+     - **`Giữ thức khi bật Host` (`keep-awake-host-on`)**: Giữ hệ thống thức suốt phiên bật Host để sẵn sàng truy cập từ xa; nhả ngay khi tắt Host hoặc thoát ứng dụng.
+   - **Cho phép màn hình tắt tự nhiên**: Chỉ dùng `prevent-app-suspension` (không dùng `prevent-display-sleep`).
+   - **Khôi phục sau Sleep theo nguyên tắc Fail-Closed**: Khi Windows thức dậy, Host kiểm tra lại cổng LAN và tuyến Tailscale Funnel hiện hữu; nếu tuyến không còn hợp lệ sẽ chuyển sang trạng thái cảnh báo an toàn thay vì tự ý mở lại đường truyền công cộng ngầm.
+3. **Hạ tầng đo tài nguyên nhẹ cho Phase 7.4 & Chuẩn bị Rà soát Ổn định Hợp nhất Phase 6.3–6.5**:
+   - Bổ sung `HostResourceSampler` (`0` bộ đếm thời gian nền khi không mở bảng chẩn đoán; tách bạch rõ tiến trình DoReMi và tiến trình Tailscale đọc chỉ-đọc) và tạm dừng bộ đếm giao diện khi thu nhỏ cửa sổ.
+   - Bảo toàn nguyên vẹn `library.db` (`SQLite schema v10`), thiết bị đã ghép nối, token đã mã hóa, chất lượng âm thanh gốc và giữ nguyên chưa can thiệp sớm **5 hạng mục UI Phase 7 (`UI-BACKLOG-01`..`UI-BACKLOG-05`)**.
+   - Xem hướng dẫn UAT thực tế tại [`docs/phase-6/PHASE_6.5_WINDOWS_UAT.md`](./docs/phase-6/PHASE_6.5_WINDOWS_UAT.md) và sổ rà soát hợp nhất Phase 6.3–6.5 tại [`docs/phase-6/PHASE_6.3_TO_6.5_STABILIZATION_BACKLOG.md`](./docs/phase-6/PHASE_6.3_TO_6.5_STABILIZATION_BACKLOG.md).

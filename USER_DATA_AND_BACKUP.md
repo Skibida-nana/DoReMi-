@@ -8,7 +8,8 @@
 - **Chế độ chạy QA / Smoke Test**: Dùng `--user-data-dir=%TEMP%\...` hoặc `DOREMI_SMOKE_USER_DATA`, cô lập hoàn toàn khỏi thư viện thật.
 
 ## 2. Cấu trúc file dữ liệu bên trong `%APPDATA%\Lossless Player`
-- `library.db` (+ `-wal`, `-shm`): Cơ sở dữ liệu SQLite chính (schema v8, bật `WAL` và `foreign_keys = ON`), lưu thông tin track (chế độ đọc-only với file nhạc gốc), playlist, favorites, metadata overrides, custom lyrics, profile, thống kê nghe, watched folders, exclusions.
+- `library.db` (+ `-wal`, `-shm`): Cơ sở dữ liệu SQLite chính (schema v9, bật `WAL` và `foreign_keys = ON`), lưu thông tin track (chế độ đọc-only với file nhạc gốc), playlist, favorites, metadata overrides, custom lyrics, profile, thống kê nghe, watched folders, exclusions, và cấu hình/bảng ghép nối DoReMi Connect (`connect_host_config`, `connect_shared_sources`, `connect_authorized_devices`, `connect_remembered_hosts`).
+- `connect/host-cert.json` & `connect/secrets.json`: Chứng chỉ X.509 ECDSA P-256 của Host và kho bí mật (khóa riêng Host + token thiết bị Client) được mã hóa qua Electron `safeStorage` (Windows DPAPI). **Lưu ý bảo mật**: Các file sao lưu SQLite (`library.db`) KHÔNG chứa khóa riêng Host hay token Client có thể dùng lại; khi khôi phục sang máy mới hoặc mất `connect/secrets.json`, các thiết bị cần ghép nối lại bằng mã mời dùng 1 lần.
 - `library.db.backup-before-migration-<timestamp>`: Bản sao lưu tự động tạo trước khi chạy schema migration mới.
 - `artwork-cache/` & `artwork-thumbs/`: Cache ảnh bìa trích xuất từ tag / thư mục (hỗ trợ dọn file mồ côi qua `pruneOrphanedMediaFiles()`).
 - `logs/playback-diagnostics.log` (+ `.1.log`) & `logs/main-crash.log` (+ `.1.log`): Log chẩn đoán và crash cục bộ xoay vòng giới hạn <= 512 KB/file.

@@ -1,24 +1,25 @@
 # CURRENT_STATE.md — Bộ nhớ ngắn hạn DoReMi
 
-- **Last Updated**: 2026-11-26T09:49+07:00
-- **Last Verified Checkpoint**: `PHASE-5.2.1-FINAL-UI-GUIDE-ABOUT-RC2-20261126`
-- **Verification Scope**: Hoàn tất **Phase 5.2.1 (`5.2.1A → 5.2.1E`)** trên nền Phase 5.1 & 5.2 — Library Back to Top & `+ Tạo playlist`, Unified Focus Player Sidebar, Settings `Giới thiệu` (`kamisamao`, thông tin Audio Engine/Decoder chính xác), Settings `Hướng dẫn sử dụng` (15 chương offline + search tiếng Việt đồng bộ với `docs/USER_GUIDE.md`), nâng phiên bản `package.json` lên `1.0.0-rc.2`, đóng gói tách biệt `release/v1.0.0-rc.2/` (giữ nguyên `release/v1.0.0-rc.1/` và Phase 5.1 EXE).
-- **Source References**: [`PHASE_5.2.1_UI_REFINEMENT_REPORT.md`](file:///G:/Source%20code%20DoReMi/docs/phase-5.2/PHASE_5.2.1_UI_REFINEMENT_REPORT.md), [`PHASE_5.2.1_DOCUMENTATION_SYNC_REPORT.md`](file:///G:/Source%20code%20DoReMi/docs/phase-5.2/PHASE_5.2.1_DOCUMENTATION_SYNC_REPORT.md), [`PHASE_5.2_WINDOWS_UAT.md`](file:///G:/Source%20code%20DoReMi/docs/phase-5.2/PHASE_5.2_WINDOWS_UAT.md), [`docs/USER_GUIDE.md`](file:///G:/Source%20code%20DoReMi/docs/USER_GUIDE.md)
-- **Verification Status**: `RELEASE CANDIDATE - PENDING UAT`
+- **Last Updated**: 2026-11-28T21:16+07:00
+- **Last Verified Checkpoint**: `PHASE-6.5-RESOURCE-POWER-MANAGEMENT-RC9-20261128`
+- **Verification Scope**: Hoàn tất **Phase 6.5 — Resource Management, Power Management, Adaptive Runtime Optimization & Long-Running Server Stability (`1.0.0-rc.9`)** trên nền Phase 6.4 (`rc.8`).
+- **Source References**: [`docs/phase-6/PHASE_6.5_RESOURCE_ARCHITECTURE.md`](file:///G:/Source%20code%20DoReMi/docs/phase-6/PHASE_6.5_RESOURCE_ARCHITECTURE.md), [`docs/phase-6/PHASE_6.5_POWER_MANAGEMENT.md`](file:///G:/Source%20code%20DoReMi/docs/phase-6/PHASE_6.5_POWER_MANAGEMENT.md), [`docs/phase-6/PHASE_6.5_BENCHMARK_REPORT.md`](file:///G:/Source%20code%20DoReMi/docs/phase-6/PHASE_6.5_BENCHMARK_REPORT.md), [`docs/phase-6/PHASE_6.5_RESOURCE_LIFECYCLE.md`](file:///G:/Source%20code%20DoReMi/docs/phase-6/PHASE_6.5_RESOURCE_LIFECYCLE.md), [`docs/phase-6/PHASE_6.5_WINDOWS_UAT.md`](file:///G:/Source%20code%20DoReMi/docs/phase-6/PHASE_6.5_WINDOWS_UAT.md), [`docs/phase-6/PHASE_6.3_TO_6.5_STABILIZATION_BACKLOG.md`](file:///G:/Source%20code%20DoReMi/docs/phase-6/PHASE_6.3_TO_6.5_STABILIZATION_BACKLOG.md), [`docs/phase-6/PHASE_6.5_REPORT.md`](file:///G:/Source%20code%20DoReMi/docs/phase-6/PHASE_6.5_REPORT.md), `src/main/services/connect/{host-power-manager,resource-sampler,host-service,connect-client,remote-alac-decoder,device-auth-service,tailscale-funnel-provider,smart-connection-manager}.ts`
+- **Verification Status**: `RELEASE CANDIDATE - AUTOMATED RESOURCE, POWER & SOAK VERIFIED · PACKAGED RC.9 VERIFIED · PHYSICAL COMBINED UAT (6.3–6.5) PENDING`
 
 ---
 
 ## Trạng thái hiện tại
-- **Current Phase**: **Phase 5.2.1 (`5.2.1A → 5.2.1E`)** — **`COMPLETED (RELEASE CANDIDATE - PENDING UAT)`**
-- **Current RC Tag / Output**: `1.0.0-rc.2` trong `release/v1.0.0-rc.2/` (`package.json`: `"version": "1.0.0-rc.2"`, userData cố định `%APPDATA%\Lossless Player`).
-- **UI & Audio Integrity được bảo toàn**: 100% offline Windows Player Standalone (zero Server/Phase 6 runtime), Audio Engine & Codec Engine isolation nguyên vẹn, bản dự phòng Phase 5.1 & RC1 giữ nguyên.
+- **Current Phase**: **Phase 6.5** — **`RELEASE CANDIDATE (v1.0.0-rc.9)`** *(Sẵn sàng cho Đợt Rà soát Ổn định & Tối ưu Hợp nhất Phase 6.3 + 6.4 + 6.5)*
+- **Version / Packaging**: `package.json`: `"version": "1.0.0-rc.9"`, `appId`: `com.losslessplayer.desktop`, `userData`: `%APPDATA%\Lossless Player` (**SQLite schema `v10`** giữ nguyên tương thích 100%, lưu `connect.host.power_policy` trong `app_preferences`). Bộ cài tại [`release/v1.0.0-rc.9/`](file:///G:/Source%20code%20DoReMi/release/v1.0.0-rc.9/) (`Portable EXE`, `Portable ZIP`, `NSIS Setup`, `win-unpacked/DoReMi.exe`, `SHA256SUMS.txt`), bảo toàn `v1.0.0-rc.1/`..`v1.0.0-rc.8/`. Điểm khôi phục mã nguồn lưu tại `backups/phase-6.4-pre-phase65-checkpoint/` (`352` tệp, đã đối chiếu SHA-256) trên nhánh Git `feature/phase-6.5-resource-power-management`.
+- **Phase 6.5 Resource & Power Capabilities**:
+  - **Runtime Resource Optimization**: Tái sử dụng kết nối TLS Keep-Alive cách ly theo `(hostId, transport, SPKI/origin, gen)` trên `ConnectClientService` (giảm **`64,8%`** kết nối TCP LAN `108 -> 38` và **`81,5%`** bắt tay TLS Remote `108 -> 20`), gom nhịp ghi SQLite `touchDeviceActivity` `30s/thiết bị` + `deviceAuthCache` `10s` tự hủy tức thì khi thu hồi quyền (giảm **`93,9%`** lượt ghi SQLite `165 -> 10`), giải phóng khóa riêng khỏi RAM khi Host `STOPPED`, gộp yêu cầu ảnh bìa/lyrics đang bay, bản sao độc lập PCM ALAC WASM + tự dọn cửa sổ `20s`/chỉ mục `60s`, và khóa `sourceRevision` cho kế hoạch chuẩn hóa FLAC (`<= 8 MB`).
+  - **Windows Power Management (`HostPowerManager`)**: 3 chế độ tường minh lưu bền vững (`follow-system` mặc định, `keep-awake-streaming` kèm `45s` đệm chuyển bài + nhả tức thì khi thu hồi thiết bị, `keep-awake-host-on`) dùng `powerSaveBlocker.start('prevent-app-suspension')` cho phép màn hình tắt tự nhiên; đối soát `suspend`/`resume` theo nguyên tắc **Fail-Closed** (không bao giờ tự ý mở lại tuyến Funnel công cộng ngầm); nhận biết nguồn pin (`on-battery`).
+  - **Phase 7.4 Resource Sampler Contract**: `HostResourceSampler` (`ScopedHostResourceBreakdown`, `0` timer nền khi không gọi, tách rõ tiến trình DoReMi và tiến trình Tailscale chỉ-đọc); tạm dừng timer giao diện khi thu nhỏ cửa sổ. Bảo toàn nguyên vẹn **5 hạng mục UI Phase 7 (`UI-BACKLOG-01..05`)**.
 
 ## Trạng thái kiểm thử thực tế (Verified sau chỉnh sửa code cuối)
-- **`npm.cmd run doctor`**: **`PASSED`** (`0` hard failures, `2` expected host Node N-API 9 warnings).
-- **`npm.cmd run lint` (`tsc --noEmit`)**: **`PASSED`** (`0` lỗi).
-- **`npm.cmd run codecs:verify`**: **`PASSED`** (`manifest.json` OK).
-- **`npm.cmd run docs:sync -- --check`**: **`PASSED`** (`docs/USER_GUIDE.md` khớp `v1.0.0-rc.2`).
-- **`npm.cmd run test:electron`** (40 tệp test, kèm FFmpeg + Foobar2000): **`191 tests: 189 PASS, 0 FAIL, 2 SKIP`** (`Phase 4.5C` OS link `EPERM` tests trong sandbox, `6,252.32 ms`).
-- **`npm.cmd run build`**: **`PASSED`** (`out/main/index.js` `336.24 kB` + lazy `codec-manager` `122.05 kB`, `out/preload/index.cjs` `11.11 kB`, main renderer `675.38 kB` + lazy chunks `AboutSection` `27.14 kB`, `UserGuideSection` `37.46 kB`).
-- **Electron GUI Smoke (Dev & Packaged RC2)**: **`PASSED`** trên cả dev (`packaged=false`) và `release/v1.0.0-rc.2/win-unpacked/DoReMi.exe` (`packaged=true`, `rootChildren=2`, `diagLogs=1`).
-- **Prod Dependency Audit**: **`0` lỗ hổng** trên `23` prod dependencies (`npm audit --omit=dev --json`).
+- **`npm.cmd audit --omit=dev --json`**: **`PASSED`** (`0` lỗ hổng trên `53` prod deps; `0` dependency mới).
+- **`npm.cmd run docs:sync -- --check` + `codecs:verify` + `lint` + `build`**: **`PASSED`** (`0` lỗi TS, `main 795.99 kB` + lazy `codec-manager 122.05 kB`, `preload 19.66 kB`, main renderer `677.38 kB` (`+0 kB`) + lazy `ServerPage 400.69 kB`).
+- **`npm.cmd run test:electron`** (toàn bộ **55 tệp** với FFmpeg + Foobar2000): **`232 / 232 PASS, 0 FAIL, 0 SKIP`** (`19,997.86 ms`).
+- **Benchmark Before/After (`qa/logs/phase65-benchmark-{before,after}.json`) & Soak (`qa/logs/phase65-sustained-stability.json`)**: `25/25` kịch bản PASS (`finalPostShutdownRssMb: 117.38 -> 108.88 MB`, `arrayBuffersMb: 0`); Soak `118.93s` kèm tạm dừng `31.5s` đạt `rssEnd = 94.64 MB`, `0` lỗi; Electron `powerSaveBlocker` xác minh thực tế (`qa/logs/phase65-windows-power-verification.json`).
+- **Smoke & Packaged Functional Verification (`release/v1.0.0-rc.9/win-unpacked/DoReMi.exe`)**: **`PASSED`** (Dev + Packaged GUI Smoke `OK`; 2-boot Packaged Functional Verification `OK` cho Local `<audio>`, Remote `<audio>`, 3 chế độ nguồn điện, khôi phục kết nối và lưu bền vững SQLite `v10` + DPAPI).
+- **Chưa chạy vật lý**: UAT thực địa hợp nhất Phase 6.3–6.5 (Internet Funnel thật, chuyển mạng Wi-Fi ↔ Hotspot 4G/5G, `powercfg /requests` quyền Admin & Sleep/Resume vật lý, đo trên laptop dòng U cấu hình thấp, ngâm 2h/8h).

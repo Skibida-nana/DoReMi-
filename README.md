@@ -1,6 +1,6 @@
 # DoReMi Desktop (Windows) — Offline Hi-Res Audio Player
 
-**Designed & Developed by `kamisamao`** · **Version**: `1.0.0-rc.2` (`RELEASE CANDIDATE - PENDING UAT`)
+**Designed & Developed by `kamisamao`** · **Version**: `1.0.0-rc.9` (`RELEASE CANDIDATE - PENDING UAT`)
 
 Ứng dụng nghe nhạc Lossless & Hi-Res chạy **100% cục bộ và offline trên Windows PC**, xây dựng bằng **Electron + React + TypeScript + electron-vite + SQLite (`better-sqlite3`) + `@mgz-dev/alac` + `music-metadata` + `electron-builder`**.
 
@@ -20,23 +20,25 @@
 DoReMi/
 ├── electron.vite.config.ts              # Build Main, Preload (CJS sandbox), Renderer (React.lazy)
 ├── electron-builder.yml                 # Đóng gói Windows NSIS Installer, Portable EXE, Portable ZIP
-├── package.json                         # v1.0.0-rc.2 & scripts (docs:sync, build, dist, test:electron)
+├── package.json                         # v1.0.0-rc.9 & scripts (docs:sync, build, dist, test:electron)
 ├── docs/
 │   ├── USER_GUIDE.md                    # Tự động đồng bộ từ src/shared/user-guide/guide-content.ts
-│   └── phase-5.2/                       # Báo cáo kỹ thuật, UAT checklist & Verification reports
+│   ├── phase-5.2/                       # Báo cáo kỹ thuật, UAT checklist & Verification reports
+│   └── phase-6/                         # Personal Hybrid Server, Security, Remote HTTPS, Handover & Power/Resource (Phase 6.1–6.5)
 ├── qa/                                  # One-Click Windows QA Launchers (.cmd)
 ├── scripts/                             # doctor, sync-user-guide, verify-build, verify-codecs, smoke-electron
 ├── src/
 │   ├── shared/
-│   │   ├── contracts/                   # IPC channels & lossless-media:// protocol URL contract
-│   │   ├── types/                       # Shared DTOs (track, library, playlist, stage5/6, ipc, codec-engine)
+│   │   ├── contracts/                   # IPC channels, lossless-media:// & /api/v1/ Connect (+ Remote) contracts
+│   │   ├── types/                       # Shared DTOs (track, library, playlist, connect, stage5/6, ipc, codec)
 │   │   ├── user-guide/                  # Single Source of Truth cho 15 chương User Guide + Search VN
-│   │   └── utils/                       # app-metadata, audio-codec, audio-dsp, natural-sort, playback-controls
+│   │   └── utils/                       # album-sort, smart-shuffle, app-metadata, audio-codec, audio-dsp, natural-sort, playback-controls
 │   ├── main/
 │   │   ├── index.ts                     # Single-instance, resilient crash handlers, userData DB, strict CSP
 │   │   ├── windows/main-window.ts       # Hardened BrowserWindow (contextIsolation, sandbox, nodeIntegration: false)
-│   │   ├── database/                    # connection.ts (SQLite WAL + FK), integrity.ts, migrations v1–v8, repos
+│   │   ├── database/                    # connection.ts (SQLite WAL + FK), integrity.ts, migrations v1–v10, repos
 │   │   ├── services/                    # library, artwork, alac-decoder (WASM), lyrics, playlist, profile, stats
+│   │   ├── services/connect/            # Phase 6.1–6.5 Hybrid Server, Security, Funnel, Smart Handover & Power/Resource Management
 │   │   ├── services/codec/              # Lớp Codec Engine cô lập (Isolated khỏi Audio Engine & UI mặc định)
 │   │   └── ipc/                         # validators.ts & register-ipc.ts
 │   ├── preload/index.ts                 # contextBridge API (window.losslessApi)
@@ -44,9 +46,9 @@ DoReMi/
 │       ├── app/App.tsx                  # Route lazy-loading + AppErrorBoundary + OverlayHostProvider
 │       ├── features/about/              # AboutSection.tsx (kamisamao, thông tin runtime & decoder)
 │       ├── features/user-guide/         # UserGuideSection.tsx (15 chương offline + tìm kiếm tiếng Việt)
-│       ├── pages/                       # Home, Library (+BackToTop & +Tạo playlist), NowPlaying, AudioLab, Settings...
-│       ├── player/audio-engine.ts       # HTMLAudioElement + Web Audio AudioDspGraph (Graphic/Parametric EQ, FFT)
-│       └── stores/                      # library-store.ts, player-store.ts, ui-store.ts
+│       ├── pages/                       # Home, Library, NowPlaying, AudioLab, ServerPage, Settings...
+│       ├── player/audio-engine.ts       # HTMLAudioElement + Web Audio AudioDspGraph (Local + Remote Adapter)
+│       └── stores/                      # library-store.ts, player-store.ts, connect-store.ts, ui-store.ts
 └── tests/                               # Bộ kiểm thử node:test chạy trên runtime Electron
 ```
 

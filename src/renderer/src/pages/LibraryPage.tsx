@@ -14,6 +14,7 @@ import {
   RefreshCw,
   Search,
   Settings2,
+  Shuffle,
   Sparkles,
   Trash2,
   X,
@@ -127,6 +128,10 @@ export function LibraryPage() {
   const trackListContainerRef = useRef<HTMLDivElement | null>(null);
 
   const allTracks = useMemo(() => uiStore.getUnifiedTracks(), [library.tracks]);
+  const playableTrackCount = useMemo(
+    () => allTracks.filter((t) => t.status === 'available').length,
+    [allTracks],
+  );
   const allAlbums = useMemo(() => uiStore.getDerivedAlbums(), [library.tracks]);
   const favoriteSet = useMemo(() => uiStore.getFavoriteIdSet(), [ui.favoriteIds]);
 
@@ -693,6 +698,22 @@ export function LibraryPage() {
               )}
             </>
           )}
+
+          <button
+            type="button"
+            data-testid="library-toolbar-play-random-btn"
+            title={
+              playableTrackCount > 0
+                ? 'Phát ngẫu nhiên từ toàn bộ Thư viện nhạc'
+                : 'Chưa có bài hát khả dụng để phát ngẫu nhiên'
+            }
+            disabled={playableTrackCount === 0}
+            onClick={() => uiStore.playRandomFromLibrary()}
+            className="lp-btn-ghost inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full px-3.5 text-[12px] font-semibold whitespace-nowrap transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-45"
+          >
+            <Shuffle className="h-3.5 w-3.5" />
+            <span>Phát ngẫu nhiên</span>
+          </button>
 
           <button
             type="button"

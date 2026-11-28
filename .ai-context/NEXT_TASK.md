@@ -1,17 +1,23 @@
 # NEXT_TASK.md — Bộ nhớ tiếp nối công việc
 
-- **Last Updated**: 2026-11-26T09:49+07:00
-- **Last Verified Checkpoint**: `PHASE-5.2.1-FINAL-UI-GUIDE-ABOUT-RC2-20261126`
-- **Verification Scope**: Đã hoàn tất toàn bộ **Phase 5.2.1 (`5.2.1A → 5.2.1E`)**; phát hành bản **`1.0.0-rc.2`** tại `release/v1.0.0-rc.2/` cùng bộ QA 1-click `qa/*.cmd` và Hướng dẫn sử dụng 15 chương tích hợp.
-- **Source References**: [`PHASE_5.2_WINDOWS_UAT.md`](file:///G:/Source%20code%20DoReMi/docs/phase-5.2/PHASE_5.2_WINDOWS_UAT.md), [`PHASE_5.2.1_UI_REFINEMENT_REPORT.md`](file:///G:/Source%20code%20DoReMi/docs/phase-5.2/PHASE_5.2.1_UI_REFINEMENT_REPORT.md), [`PHASE_5.2.1_DOCUMENTATION_SYNC_REPORT.md`](file:///G:/Source%20code%20DoReMi/docs/phase-5.2/PHASE_5.2.1_DOCUMENTATION_SYNC_REPORT.md)
-- **Verification Status**: `RELEASE CANDIDATE - PENDING UAT`
-
----
-
-## Việc cần làm tiếp theo
-1. **Nghiệm thu Windows UAT RC2 bởi Người dùng (Không cần nhập lệnh Terminal)**:
-   - Nhấp đúp [`qa/DoReMi-QA-SmokeTest.cmd`](file:///G:/Source%20code%20DoReMi/qa/DoReMi-QA-SmokeTest.cmd) hoặc [`release/v1.0.0-rc.2/DoReMi-1.0.0-rc.2-x64-portable.exe`](file:///G:/Source%20code%20DoReMi/release/v1.0.0-rc.2/DoReMi-1.0.0-rc.2-x64-portable.exe) và đối chiếu 7 hạng mục trong [`PHASE_5.2_WINDOWS_UAT.md`](file:///G:/Source%20code%20DoReMi/docs/phase-5.2/PHASE_5.2_WINDOWS_UAT.md) (bao gồm Back to Top, `+ Tạo playlist`, Unified Focus Sidebar, Trang Giới thiệu `kamisamao`, và 15 chương Hướng dẫn sử dụng).
-2. **Chốt nhãn Stable `v1.0.0` (Chỉ khi người dùng duyệt PASS UAT)**:
-   - Cập nhật `"version": "1.0.0"` trong `package.json`, chạy `npm.cmd run docs:sync`, test/build và đóng gói bản Stable chính thức nếu được yêu cầu.
-3. **Phase 6 Tùy chọn (Chỉ khi có yêu cầu mới)**:
-   - Tuân thủ kiến trúc bàn giao tại [`PHASE_6_HANDOFF.md`](file:///G:/Source%20code%20DoReMi/PHASE_6_HANDOFF.md).
+- **Last Updated**: 2026-11-28T21:16+07:00
+- **Completed Task ID**: `PHASE-6.5-RESOURCE-POWER-MANAGEMENT` (`COMPLETED — Released v1.0.0-rc.9`)
+- **Next Planned Milestone**: **Combined Stabilization & Optimization Review of Phase 6.3 + Phase 6.4 + Phase 6.5** *(Không tự động chuyển sang Phase 6.6 khi chưa có xác nhận của người dùng)*
+- **Recovery Checkpoints Available**:
+  - `backups/phase-6.4-pre-phase65-checkpoint/` (`352` tệp — trạng thái `v1.0.0-rc.8` trước Phase 6.5, đã xác minh SHA-256)
+  - `backups/phase-6.3-rc7-checkpoint/` (`324` tệp — trạng thái `v1.0.0-rc.7` trước Phase 6.4)
+  - `backups/phase-6.2-rc6-checkpoint/` (trạng thái `v1.0.0-rc.6` trước Phase 6.3)
+- **Stabilization & Physical UAT Checklist Ready for User Review**:
+  - Hướng dẫn UAT hợp nhất (12 mục kiểm tra nhanh + 72 mục chi tiết Nhóm A–G): [`docs/phase-6/PHASE_6.5_WINDOWS_UAT.md`](file:///G:/Source%20code%20DoReMi/docs/phase-6/PHASE_6.5_WINDOWS_UAT.md).
+  - Sổ đăng ký vấn đề ổn định hợp nhất Phase 6.3–6.5: [`docs/phase-6/PHASE_6.3_TO_6.5_STABILIZATION_BACKLOG.md`](file:///G:/Source%20code%20DoReMi/docs/phase-6/PHASE_6.3_TO_6.5_STABILIZATION_BACKLOG.md).
+  - Các hạng mục UAT thực địa chờ người dùng xác nhận trên `release/v1.0.0-rc.9/`:
+    1. `STAB-P63-01`: Kết nối Remote HTTPS thực tế từ mạng ngoài qua Tailscale Funnel thật.
+    2. `STAB-P64-01`: Bàn giao phát nhạc 2 máy tính giữa Wi-Fi gia đình ↔ Hotspot 4G/5G điện thoại.
+    3. `STAB-P65-01`: Kiểm tra trực tiếp `powercfg /requests` (Admin CMD), tắt màn hình độc lập và Sleep/Resume vật lý trên Windows.
+    4. `STAB-P65-02`: Đo CPU/RAM thực tế trên laptop dòng U (`i5-1035G1 / 8 GB RAM`) và chạy ngâm dài hạn 2h/8h nếu cần (`soak-phase65.ts --minutes 120`).
+- **Preserved Deferred UI Backlog (Dành riêng cho Phase 7 — Không tự ý triển khai sớm)**:
+  - `UI-BACKLOG-01` (Phase 7.3): Chuyển động quay đĩa than `NowPlayingPage` / Focus Vinyl khi phát Remote Playback (kể cả High Performance Mode).
+  - `UI-BACKLOG-02` (Phase 7.2): Tích hợp nguồn nhạc vào Thư viện chính (`All Sources / Local Sources / Remote Server Sources`), dùng chung search/Album/Artist/Playlist/Queue, không chép file remote vào SQLite cục bộ.
+  - `UI-BACKLOG-03` (Phase 7.4): Chỉ số tài nguyên Host thực tế nhẹ (CPU, RAM, tốc độ upload, số Client đang kết nối, tách rõ phạm vi; API nền `HostResourceSampler` đã sẵn sàng từ Phase 6.5).
+  - `UI-BACKLOG-04` (Phase 7.4): Thiết kế lại giao diện Server tối giản, đưa chi tiết kỹ thuật/bảo mật vào mục Nâng cao (Advanced).
+  - `UI-BACKLOG-05` (Phase 7.3): Điều tra tương thích & đồng bộ lời bài hát (`Love Option` unsynced vs `DNA` synced & `Love Option Instrumental`), giữ thứ tự ưu tiên Custom > External LRC > Embedded.

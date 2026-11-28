@@ -13,6 +13,10 @@ import {
   nextRepeatMode,
   normalizePlaybackControls,
 } from '../../../shared/utils/playback-controls';
+import {
+  smartShuffleItems,
+  type SmartShuffleTrackMeta,
+} from '../../../shared/utils/smart-shuffle';
 
 const MAX_QUEUE_HISTORY_ENTRIES = 500;
 const MAX_AUTO_SKIP_ERRORS_CAP = 25;
@@ -33,9 +37,12 @@ export function shuffleFisherYates<T>(items: readonly T[], rng: () => number = M
   return copy;
 }
 
+export type TrackMetadataLookup = (trackId: string) => SmartShuffleTrackMeta | null;
+
 export interface PlaybackQueueControllerOptions {
   initialControls?: Partial<PlaybackControlState>;
   isTrackPlayable?: (trackId: string) => boolean;
+  getTrackMeta?: TrackMetadataLookup;
   rng?: () => number;
 }
 
@@ -63,6 +70,7 @@ export type TrackAdvanceResult =
 export class PlaybackQueueController {
   private readonly listeners = new Set<(state: PlaybackQueueState) => void>();
   private isTrackPlayableFn: (trackId: string) => boolean;
+  private getTrackMetaFn?: TrackMetadataLookup;
   private readonly rng: () => number;
 
   private entrySeq = 0;
@@ -85,6 +93,7 @@ export class PlaybackQueueController {
   constructor(options: PlaybackQueueControllerOptions = {}) {
     this.controls = normalizePlaybackControls(options.initialControls, DEFAULT_PLAYBACK_CONTROLS);
     this.isTrackPlayableFn = options.isTrackPlayable ?? (() => true);
+    this.getTrackMetaFn = options.getTrackMeta;
     this.rng = options.rng ?? Math.random;
     this.remainingReplays = getInitialRemainingReplays(this.controls.repeatMode);
     this.cachedSnapshot = this.buildSnapshot();
@@ -99,6 +108,21 @@ export class PlaybackQueueController {
 
   setTrackPlayableChecker(fn: (trackId: string) => boolean): void {
     this.isTrackPlayableFn = fn;
+  }
+
+  setTrackMetadataResolver(fn: TrackMetadataLookup | undefined): void {
+    this.getTrackMetaFn = fn;
+  }
+
+  private resolveTrackMetaForShuffle(trackId: string): SmartShuffleTrackMeta {
+    return this.getTrackMetaFn?.(trackId) ?? { trackId };
+  }
+
+  private getRecentTrackIdsForShuffle(limit = 15): string[] {
+    if (this.history.length === 0) {
+      return [];
+    }
+    return this.history.slice(-limit).map((e) => e.trackId);
   }
 
   getState(): PlaybackQueueState {
@@ -244,13 +268,28 @@ export class PlaybackQueueController {
     );
 
     if (this.controls.shuffleEnabled) {
+      const recentIds = this.getRecentTrackIdsForShuffle();
       if (startIdx >= 0) {
         const chosen = entries[startIdx];
         const remaining = entries.filter((_, i) => i !== startIdx);
         this.currentEntry = chosen;
-        this.upcoming = shuffleFisherYates(remaining, this.rng);
+        this.upcoming = smartShuffleItems({
+          items: remaining,
+          getTrackMeta: (entry) => this.resolveTrackMetaForShuffle(entry.trackId),
+          anchorTrack: this.resolveTrackMetaForShuffle(chosen.trackId),
+          recentTrackIds: recentIds,
+          rng: this.rng,
+        });
       } else {
-        const shuffled = shuffleFisherYates(entries, this.rng);
+        const shuffled = smartShuffleItems({
+          items: entries,
+          getTrackMeta: (entry) => this.resolveTrackMetaForShuffle(entry.trackId),
+          anchorTrack: this.currentEntry
+            ? this.resolveTrackMetaForShuffle(this.currentEntry.trackId)
+            : null,
+          recentTrackIds: recentIds,
+          rng: this.rng,
+        });
         // Prefer starting on a playable entry if one exists
         const firstPlayableIdx = shuffled.findIndex((e) => this.isTrackPlayableFn(e.trackId));
         if (firstPlayableIdx > 0) {
@@ -276,6 +315,64 @@ export class PlaybackQueueController {
     if (this.currentEntry && typeof this.currentEntry.contextOrderIndex === 'number') {
       this.playedIndicesInRound.add(this.currentEntry.contextOrderIndex);
     }
+
+    this.resetRepeatRuntimeForCurrent();
+    this.emit();
+    return this.currentEntry;
+  }
+
+  /**
+   * Transitions seamlessly from an exhausted natural-end queue into a new Library continuation
+   * context without overwriting previous saved playlists or discarding playback history.
+   */
+  startAutoContinueContext(
+    context: PlaybackContextDescriptor,
+    startTrackId?: string,
+  ): PlaybackQueueEntry | null {
+    const trackIds = context.trackIds.filter((id) => this.isTrackPlayableFn(id));
+    if (trackIds.length === 0) {
+      return null;
+    }
+
+    if (this.currentEntry) {
+      this.archiveCurrentToHistory(this.currentEntryFailed ? 'error' : 'completed');
+    }
+
+    const nextContext: PlaybackContextDescriptor = {
+      ...context,
+      trackIds,
+    };
+    this.context = nextContext;
+    this.removedContextIndices.clear();
+    this.playedIndicesInRound.clear();
+    this.currentEntryStarted = false;
+    this.currentEntryFailed = false;
+    this.autoErrorSkipsInChain = 0;
+
+    let startIdx = startTrackId ? trackIds.indexOf(startTrackId) : 0;
+    if (startIdx < 0) {
+      startIdx = 0;
+    }
+
+    const entries = trackIds.map((trackId, index) =>
+      this.createEntry(trackId, 'context', nextContext.contextId, index),
+    );
+    const picked = entries[startIdx]!;
+    this.currentEntry = picked;
+    if (typeof picked.contextOrderIndex === 'number') {
+      this.playedIndicesInRound.add(picked.contextOrderIndex);
+    }
+
+    const rest = entries.filter((_, idx) => idx !== startIdx);
+    this.upcoming = this.controls.shuffleEnabled
+      ? smartShuffleItems({
+          items: rest,
+          getTrackMeta: (entry) => this.resolveTrackMetaForShuffle(entry.trackId),
+          anchorTrack: this.resolveTrackMetaForShuffle(picked.trackId),
+          recentTrackIds: this.getRecentTrackIdsForShuffle(),
+          rng: this.rng,
+        })
+      : entries.slice(startIdx + 1);
 
     this.resetRepeatRuntimeForCurrent();
     this.emit();
@@ -436,13 +533,29 @@ export class PlaybackQueueController {
       }
 
       const prevOrderKey = contextEntries.map((e) => e.trackId).join('\u0001');
-      let shuffledContext = shuffleFisherYates(pool, this.rng);
+      const anchorMeta = this.currentEntry
+        ? this.resolveTrackMetaForShuffle(this.currentEntry.trackId)
+        : null;
+      const recentIds = this.getRecentTrackIdsForShuffle();
+      let shuffledContext = smartShuffleItems({
+        items: pool,
+        getTrackMeta: (entry) => this.resolveTrackMetaForShuffle(entry.trackId),
+        anchorTrack: anchorMeta,
+        recentTrackIds: recentIds,
+        rng: this.rng,
+      });
       if (pool.length >= 2) {
         for (let attempt = 0; attempt < 4; attempt += 1) {
           if (shuffledContext.map((e) => e.trackId).join('\u0001') !== prevOrderKey) {
             break;
           }
-          shuffledContext = shuffleFisherYates(pool, this.rng);
+          shuffledContext = smartShuffleItems({
+            items: pool,
+            getTrackMeta: (entry) => this.resolveTrackMetaForShuffle(entry.trackId),
+            anchorTrack: anchorMeta,
+            recentTrackIds: recentIds,
+            rng: this.rng,
+          });
         }
       }
       this.upcoming = [...playNextHead, ...shuffledContext, ...manualTail];
@@ -889,7 +1002,15 @@ export class PlaybackQueueController {
 
     let ordered = cyclePairs;
     if (this.controls.shuffleEnabled && ordered.length > 1) {
-      ordered = shuffleFisherYates(ordered, this.rng);
+      ordered = smartShuffleItems({
+        items: ordered,
+        getTrackMeta: (item) => this.resolveTrackMetaForShuffle(item.trackId),
+        anchorTrack: this.currentEntry
+          ? this.resolveTrackMetaForShuffle(this.currentEntry.trackId)
+          : null,
+        recentTrackIds: this.getRecentTrackIdsForShuffle(),
+        rng: this.rng,
+      });
       // Avoid repeating the exact just-ended track first when multiple choices exist
       if (
         this.currentEntry &&

@@ -17,3 +17,5 @@ Thumbs.db
 .antigravity/
 .aistudio/
 av3/
+backups/
+qa/logs/

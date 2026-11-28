@@ -80,7 +80,7 @@ export const USER_GUIDE_CHAPTERS: readonly UserGuideChapter[] = [
           'DoReMi giữ bố cục gọn gàng với 4 thành phần cố định trực quan:',
         ],
         bullets: [
-          'Thanh Sidebar trái (76px): Chuyển nhanh giữa Trang chủ (Playlist Gallery), Thư viện, Tìm kiếm, Yêu thích, Thống kê, Audio Lab, Màn hình đang phát và Cài đặt.',
+          'Thanh Sidebar trái (76px): Chuyển nhanh giữa Trang chủ (Playlist Gallery), Thư viện, Tìm kiếm, Yêu thích, Thống kê, Audio Lab, Máy chủ cá nhân (DoReMi Connect), Màn hình đang phát và Cài đặt.',
           'Avatar Hồ sơ (góc trên trái Sidebar): Mở nhanh trung tâm Hồ sơ & Cá nhân hóa.',
           'MiniPlayer đáy màn hình: Hiển thị bài đang phát, thanh tua, nút Yêu thích, True Shuffle, Repeat, Âm lượng và nút mở Queue Drawer.',
           'Queue Drawer: Ngăn kéo trượt bên phải hiển thị danh sách chờ phát với cơ chế ảo hóa mượt mà.',
@@ -118,9 +118,10 @@ export const USER_GUIDE_CHAPTERS: readonly UserGuideChapter[] = [
       },
       {
         id: 'ch-04-navigation-helpers',
-        heading: 'Nút Về đầu trang & Tạo Playlist nhanh',
+        heading: 'Nút Về đầu trang, Phát ngẫu nhiên & Tạo Playlist nhanh',
         paragraphs: [
           'Khi cuộn xuống sâu trong Thư viện hàng trăm đến hàng nghìn bài hát, nút nổi "Về đầu trang" (mũi tên lên) sẽ tự xuất hiện ở góc dưới bên phải ngay phía trên MiniPlayer để bạn trở về đầu trang mượt mà mà không mất bộ lọc hay vị trí tab.',
+          'Nút "Phát ngẫu nhiên" nằm ngay cạnh "+ Tạo playlist" trên thanh công cụ Thư viện cho phép bắt đầu ngay một phiên nghe ngẫu nhiên thông minh từ toàn bộ bài hát khả dụng trong thư viện cục bộ (bỏ qua file lỗi/thiếu và tách biệt nguồn Remote).',
           'Nút "+ Tạo playlist" nằm ngay ngoài cùng bên phải thanh công cụ Thư viện giúp tạo playlist mọi lúc dù bạn đang ở tab Bài hát, Album, Nghệ sĩ, Thư mục hay Yêu thích.',
         ],
       },
@@ -131,8 +132,8 @@ export const USER_GUIDE_CHAPTERS: readonly UserGuideChapter[] = [
     number: '05',
     title: 'Phát nhạc, Queue & Điều khiển',
     summary:
-      'True Shuffle không lặp vòng, chế độ Repeat, Audible Scrubbing, Chuyển bài mượt và tự động khôi phục hàng đợi phát.',
-    keywords: ['phat nhac', 'shuffle', 'repeat', 'scrubbing', 'fade', 'queue', 'khoi phuc'],
+      'Album-aware Smart Shuffle chống dồn bài cùng album, Tự động phát tiếp khi hết danh sách, Repeat, Audible Scrubbing, Chuyển bài mượt và tự động khôi phục hàng đợi phát.',
+    keywords: ['phat nhac', 'shuffle', 'smart shuffle', 'auto continue', 'repeat', 'scrubbing', 'fade', 'queue', 'khoi phuc'],
     sections: [
       {
         id: 'ch-05-controls',
@@ -141,8 +142,9 @@ export const USER_GUIDE_CHAPTERS: readonly UserGuideChapter[] = [
           'DoReMi cung cấp bộ điều khiển chính xác trên cả MiniPlayer và màn hình Đang phát:',
         ],
         bullets: [
-          'True Shuffle: Trộn ngẫu nhiên công bằng dựa trên toàn bộ danh sách, bảo đảm mọi bài đều được phát hết một lượt trước khi lặp lại.',
-          'Repeat: Chuyển linh hoạt giữa Tắt lặp, Lặp toàn bộ danh sách và Lặp một bài.',
+          'Album-aware Smart Shuffle: Trộn ngẫu nhiên thông minh phân bổ đều các album trên toàn bộ hàng đợi, hạn chế phát liên tiếp các bài cùng album/dồn cục về cuối danh sách nhưng vẫn giữ nguyên thứ tự gốc khi tắt Shuffle.',
+          'Tự động phát tiếp khi hết danh sách (Auto Continue): Khi bật trong Cài đặt -> Phát nhạc (mặc định Bật), hết bài cuối của Album/Playlist/Hàng đợi (và không bật Lặp tất cả hay Hẹn giờ tắt) sẽ tự động phát nối tiếp từ Thư viện nhạc (theo thứ tự hoặc Smart Shuffle), tuyệt đối không tự nhảy chéo từ nguồn Remote sang cục bộ.',
+          'Repeat: Chuyển linh hoạt giữa Tắt lặp, Lặp 1 lần, Lặp 2 lần, Lặp vô hạn (1 bài) và Lặp toàn bộ danh sách.',
           'Audible Scrubbing: Kéo thanh tiến trình để nghe dò âm thanh theo thời gian thực ngay trong khi tua.',
           'Chuyển bài mượt (Fade In/Out): Tùy chỉnh thời lượng 0.5s – 3s trong Cài đặt -> Phát nhạc hoặc ngay trên Now Playing.',
         ],
@@ -172,7 +174,7 @@ export const USER_GUIDE_CHAPTERS: readonly UserGuideChapter[] = [
           'Thanh tab Thư viện cho phép chuyển đổi tức thì giữa Bài hát, Album, Nghệ sĩ, Thư mục, Playlist và Yêu thích.',
         ],
         bullets: [
-          'Tab Album: Hỗ trợ trình diễn Coverflow 3D dạng đĩa vuông 1:1 hoặc lưới Album truyền thống.',
+          'Tab Album & Chi tiết Album: Hỗ trợ Coverflow 3D và lưới Album; danh sách bài hát trong Album luôn được sắp xếp chuẩn xác theo Đĩa (disc_number) -> Số bài dạng số học (track_number: 1, 2, ..., 10) -> Tên file/Tiêu đề (cả cục bộ lẫn LAN Remote).',
           'Tab Thư mục: Phản ánh cấu trúc thư mục thực tế trên ổ cứng để dễ tìm nhạc sưu tầm theo folder.',
           'Lọc nhanh tiếng Việt & đa ngôn ngữ: Hỗ trợ tìm kiếm có dấu lẫn không dấu (NFC/NFD) và ký tự CJK, đồng thời lọc theo tên định dạng (FLAC, ALAC, WAV...).',
           'Chọn nhiều bài (Multi-select): Chọn hàng loạt bằng checkbox hoặc giữ Shift+Click để chọn một dải bài, thêm vào playlist hoặc tạo playlist mới.',
@@ -218,10 +220,10 @@ export const USER_GUIDE_CHAPTERS: readonly UserGuideChapter[] = [
           'Màn hình Đang phát (Now Playing) có hai chế độ hiển thị có thể chuyển đổi qua lại tức thì:',
         ],
         bullets: [
-          'Chế độ Chuẩn (3 vùng): Hiển thị đồng thời Hàng đợi (Queue), Đĩa than / Bìa album trung tâm và Thông tin chi tiết / Lời bài hát bên phải.',
+          'Chế độ Chuẩn (3 vùng): Hiển thị đồng thời Hàng đợi (Queue), Đĩa than / Bìa album trung tâm và Thông tin chi tiết / Lời bài hát bên phải; tên bài hát dài/có dấu tiếng Việt tự động co giãn nhịp nhàng, không bị cắt mất dấu.',
           'Chế độ Focus Vinyl: Tập trung toàn màn hình vào đĩa than 33⅓ RPM cùng Lời bài hát tối giản đồng bộ theo nhịp phát.',
-          'Trạng thái Sidebar đồng nhất: Khi mới vào Màn hình đang phát từ trang khác ở chế độ Chuẩn, Sidebar hiện nhẹ ~3 giây rồi tự thu gọn. Khi bạn chuyển qua lại giữa Focus Vinyl và chế độ Chuẩn/Lyrics, Sidebar giữ nguyên trạng thái ẩn để nút Quay lại và bố cục trung tâm không bị xô lệch.',
-          'Mở nhanh Sidebar bất kỳ lúc nào bằng cách đưa chuột sát mép trái màn hình hoặc nhấn tổ hợp phím Alt + M.',
+          'Sidebar ẩn tức thì & Không xô lệch bố cục: Ngay khi bạn mở Màn hình đang phát hoặc Focus Vinyl, Sidebar lập tức ẩn gọn ở mép trái (không bật sáng 3 giây gây xao nhãng hay lệch nút Quay lại), và giữ nguyên trạng thái ẩn khi chuyển đổi giữa các chế độ phát.',
+          'Mở nhanh Sidebar bất kỳ lúc nào bằng cách đưa chuột chạm mép trái màn hình (~10px) hoặc nhấn tổ hợp phím Alt + M (khi rời Màn hình đang phát, Sidebar tự khôi phục bình thường).',
         ],
       },
     ],
@@ -362,9 +364,21 @@ export const USER_GUIDE_CHAPTERS: readonly UserGuideChapter[] = [
       },
       {
         id: 'ch-13-security',
-        heading: 'Kiến trúc an toàn Offline',
+        heading: 'Kiến trúc an toàn Offline & DoReMi Connect (Smart Connection, Quản lý Nguồn điện & Tài nguyên)',
         paragraphs: [
-          'Tiến trình giao diện chạy trong Sandbox nghiêm ngặt (contextIsolation: true, nodeIntegration: false) cùng Content Security Policy (CSP) khóa kết nối mạng ngoài, bảo đảm ứng dụng không gửi bất kỳ dữ liệu nào ra Internet.',
+          'Tiến trình giao diện chạy trong Sandbox nghiêm ngặt (contextIsolation: true, nodeIntegration: false) cùng Content Security Policy (CSP) khóa kết nối mạng ngoài ở renderer.',
+          'Tính năng Máy chủ nhạc cá nhân (DoReMi Connect · Phase 6.2–6.5) mặc định TẮT. Trong mạng nội bộ (LAN Direct), dữ liệu chỉ phục vụ qua HTTPS mã hóa TLS kèm chứng chỉ SPKI Pinning nghiêm ngặt, hỗ trợ ghép nối nhanh qua mã QR/JSON ngoại tuyến dùng 1 lần, xoay vòng token thiết bị và danh sách thư mục chia sẻ chỉ đọc do bạn tự chọn.',
+          'Khi bạn chủ động bật Truy cập từ xa qua Internet (Remote HTTPS · Phase 6.3), máy Host sử dụng Tailscale Funnel làm cầu nối TLS công cộng tới một cổng Gateway riêng chỉ lắng nghe tại loopback 127.0.0.1 với danh sách đường dẫn cho phép nghiêm ngặt (chặn hoàn toàn /enrollment, /remote/provision, /admin, /diagnostics). Thiết bị Client (Windows hay ứng dụng Android tương lai) KHÔNG cần cài Tailscale hay VPN.',
+          'Từ Phase 6.4–6.5, bộ quản lý kết nối thông minh (Smart Connection Manager) hỗ trợ 3 chế độ trên từng Host đã lưu (Tự động, Chỉ LAN, Chỉ Remote), kết hợp quản lý nguồn điện Windows tường minh (Theo hệ thống, Giữ thức khi đang phát từ xa, Giữ thức khi bật Host) và tối ưu tài nguyên chạy dài cho máy cấu hình phổ thông.',
+        ],
+        bullets: [
+          'Không tải nhạc lên Cloud, không cần thuê VPS. Chế độ Remote HTTPS mặc định TẮT và chỉ mở khi bạn tự bật kèm xác nhận công khai Internet.',
+          'Ghép nối lần đầu bắt buộc thực hiện trong mạng LAN an toàn qua QR / Pairing Payload (doremi-pair v1 <= 2 KB) hoặc thủ công. Quyền Truy cập từ xa (remoteAccessEnabled) mặc định TẮT cho từng thiết bị — Host phải chủ động cấp quyền mới nhận được scoped Remote Token (r1.*).',
+          'Token LAN và Remote Token được tách biệt hoàn toàn: token LAN bị từ chối trên Gateway công cộng, và ngược lại; tắt hoặc thu hồi quyền từ xa chỉ chặn Remote HTTPS mà không làm gián đoạn kết nối LAN đang tin cậy.',
+          'Mọi quá trình tự động chuyển mạng (LAN <-> Remote HTTPS), tái sử dụng kết nối Keep-Alive được cách ly theo từng Host hoặc quét lại IP LAN mới qua mDNS đều bắt buộc vượt qua đầy đủ bước xác minh mật mã (SPKI Pinning trên LAN; CA công cộng rejectUnauthorized: true + chặn 3xx + challenge-response ECDSA P-256 trên Remote) trước khi gửi Bearer Token.',
+          'Bàn giao phát nhạc (Playback Handover) giữ nguyên bài hát đang nghe, vị trí thời gian, trạng thái Phát/Tạm dừng, Hàng đợi, Smart Shuffle, Repeat, Volume, EQ và bộ lọc tìm kiếm Thư viện Remote.',
+          'Chế độ nguồn điện máy Host mặc định tôn trọng cài đặt Sleep của Windows ("Theo hệ thống"). Nếu chọn "Giữ thức khi đang phát từ xa" hoặc "Giữ thức khi bật Host", DoReMi chỉ ngăn tiến trình hệ thống ngủ (prevent-app-suspension) để nhạc không đứt quãng nhưng vẫn cho phép màn hình tắt bình thường; khi máy thức dậy từ Sleep, tuyến Remote HTTPS được kiểm tra an toàn fail-closed và không bao giờ tự mở lại ngầm.',
+          'Truyền phát nguyên bản trên Host (Direct Streaming + HTTP 206 Range), không chuyển mã hay sửa file nhạc gốc; khi tắt Host hoặc thu hồi thiết bị, mọi kết nối, bộ đệm giải mã và khóa giữ thức đều được giải phóng ngay lập tức.',
         ],
       },
     ],
@@ -413,6 +427,8 @@ export const USER_GUIDE_CHAPTERS: readonly UserGuideChapter[] = [
           'Lời bài hát bị lỗi ô vuông hoặc sai ký tự tiếng Việt / Nhật / Hoa: Chọn lại đúng bảng mã (Windows-1258, Shift-JIS, GBK, UTF-8...) ngay khi nhập tệp .lrc / .txt.',
           'Máy cấu hình yếu bị giật khi bật đĩa than hoặc ảnh nền: Vào Cá nhân hóa, đặt Chất lượng giao diện về "Tiết kiệm tài nguyên" (Power Saver) hoặc bật "Giảm chuyển động".',
           'Một số file ALAC (.m4a) không mở được ở trình phát mặc định nhưng vẫn phát trên DoReMi: Bình thường — DoReMi tích hợp bộ giải mã @mgz-dev/alac WebAssembly nội bộ để phát trực tiếp file ALAC chuẩn.',
+          'Báo lỗi gói thông tin Remote Endpoint hết hạn (REMOTE_ENDPOINT_EXPIRED) khi ở ngoài mạng nhà: Để bảo mật, gói địa chỉ Remote HTTPS đã ký có thời hạn hiệu lực. Khi mang máy về mạng Wi-Fi nhà, chỉ cần kết nối LAN với Host (chế độ Tự động sẽ tự làm mới hoặc bấm "Đồng bộ Remote") để gia hạn.',
+          'Máy Host tự chuyển sang Sleep khi bạn để ở nhà đi ra ngoài: Mặc định DoReMi chọn "Theo hệ thống" để tôn trọng cài đặt tiết kiệm điện của Windows. Nếu muốn nghe từ xa lâu dài, hãy chọn "Giữ thức khi đang phát từ xa" hoặc "Giữ thức khi bật Host" trong trang Server (màn hình vẫn tắt bình thường để bảo vệ tấm nền). Lưu ý không thể đánh thức máy tính đã ngủ qua Internet công cộng.',
           'Muốn kiểm tra đường dẫn dữ liệu SQLite: Mở Cài đặt -> Thư viện nhạc để xem vị trí chính xác của library.db.',
         ],
       },

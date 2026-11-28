@@ -95,11 +95,19 @@ import {
   DEFAULT_PLAYBACK_CONTROLS,
   normalizePlaybackControls,
 } from '../../../shared/utils/playback-controls';
+import { sortAlbumTracksCanonical } from '../../../shared/utils/album-sort';
+import {
+  smartShuffleItems,
+  type SmartShuffleTrackMeta,
+} from '../../../shared/utils/smart-shuffle';
+import type { AutoContinueRequest, AutoContinueResolution } from '../player/audio-engine';
 import { resolveNextNowPlayingModePatch } from '../utils/animation-policy';
 import {
   readSessionPresentation,
   writeSessionPresentation,
 } from '../utils/presentation-lifecycle';
+import { isRemoteTrackId } from '../../../shared/contracts/connect-api';
+import { connectStore } from './connect-store';
 import { libraryStore } from './library-store';
 import {
   playbackQueueController,
@@ -270,6 +278,7 @@ const DEFAULT_PREFERENCES: PersonalizationPreferences = {
   replayGain: { ...DEFAULT_REPLAYGAIN_SETTINGS },
   audioLab: createDefaultAudioLabSettings(),
   playbackControls: { ...DEFAULT_PLAYBACK_CONTROLS },
+  autoContinueEnabled: true,
   editorialTypography: { ...DEFAULT_EDITORIAL_TYPOGRAPHY },
   editorialFonts: [],
 };
@@ -319,6 +328,8 @@ function loadInitialPreferences(): PersonalizationPreferences {
     replayGain: normalizeReplayGainSettings(stored.replayGain),
     audioLab: normalizeAudioLabSettings(stored.audioLab),
     playbackControls: normalizePlaybackControls(stored.playbackControls),
+    autoContinueEnabled:
+      typeof stored.autoContinueEnabled === 'boolean' ? stored.autoContinueEnabled : true,
     editorialTypography: normalizeEditorialTypographySettings(
       stored.editorialTypography,
       validFontIds,
@@ -388,6 +399,7 @@ export type AppRoute =
   | 'audio-lab'
   | 'search'
   | 'statistics'
+  | 'server'
   | 'settings'
   | 'profile';
 
@@ -527,7 +539,7 @@ class UiStore {
       showLyricsPanel: initialRightTab === 'lyrics',
       nowPlayingRightTab: initialRightTab,
       nowPlayingMode: initialMode,
-      nowPlayingSidebarRevealed: initialMode !== 'focus',
+      nowPlayingSidebarRevealed: (sessionPresentation?.route ?? 'home') !== 'now-playing',
       focusLyricsBrowse: sessionPresentation?.focusLyricsBrowse ?? null,
       vinylSwapPhase: 'idle',
       vinylDisplayTrackId: '',
@@ -563,7 +575,12 @@ class UiStore {
       normalizeReplayGainSettings(initialPrefs.replayGain),
     );
     playbackQueueController.setTrackPlayableChecker((trackId) => this.isTrackIdPlayable(trackId));
+    playbackQueueController.setTrackMetadataResolver((trackId) =>
+      this.resolveTrackMetaForShuffle(trackId),
+    );
     playerActions.setPlaybackControls(initialControls);
+    playerActions.setAutoContinueEnabled(initialPrefs.autoContinueEnabled ?? true);
+    playerActions.setAutoContinueResolver((req) => this.resolveAutoContinuePlan(req));
 
     playbackQueueController.subscribe((qState) => {
       const nextIds: string[] = [];
@@ -697,11 +714,16 @@ class UiStore {
         replayGain: normalizeReplayGainSettings(preferences.replayGain),
         audioLab: normalizeAudioLabSettings(preferences.audioLab),
         playbackControls: normalizePlaybackControls(preferences.playbackControls),
+        autoContinueEnabled:
+          typeof preferences.autoContinueEnabled === 'boolean'
+            ? preferences.autoContinueEnabled
+            : true,
       };
       playerActions.setTransitionConfig(normalizedPreferences.transition);
       playerActions.setAudioLabSettings(normalizedPreferences.audioLab!);
       playerActions.setReplayGainSettings(normalizedPreferences.replayGain!);
       playerActions.setPlaybackControls(normalizedPreferences.playbackControls!);
+      playerActions.setAutoContinueEnabled(normalizedPreferences.autoContinueEnabled ?? true);
       safeWriteJson(PREFERENCES_STORAGE_KEY, normalizedPreferences);
 
       const nextPlaylists = playlistSnap
@@ -836,7 +858,7 @@ class UiStore {
       isQueueOpen: false,
       showLyricsPanel: targetTab === 'lyrics',
       nowPlayingRightTab: targetTab,
-      nowPlayingSidebarRevealed: this.state.nowPlayingMode !== 'focus',
+      nowPlayingSidebarRevealed: false,
     });
   }
 
@@ -1850,6 +1872,11 @@ class UiStore {
         this.state.preferences.themeMode,
       );
     }
+    if (isRemoteTrackId(trackId)) {
+      const remote = connectStore.getRemoteTrackRecord(trackId);
+      const seed = remote?.album || remote?.title || localSeed || trackId;
+      return computePaletteFromSeed(seed);
+    }
     const local = libraryStore.getTrackById(trackId);
     const seed = local?.album || local?.title || localSeed || trackId;
     return computePaletteFromSeed(seed);
@@ -1872,6 +1899,9 @@ class UiStore {
   getCoverForTrack(trackId: string, size: 'full' | 'thumb' = 'full'): string {
     if (!trackId) {
       return DEFAULT_DOREMI_ARTWORK_URL;
+    }
+    if (isRemoteTrackId(trackId)) {
+      return connectStore.getCoverForTrack(trackId, size);
     }
     const lib = libraryStore.getSnapshot();
     const localTrack = lib.tracks.find((t) => t.id === trackId);
@@ -1948,6 +1978,10 @@ class UiStore {
 
   async toggleFavorite(id: string): Promise<void> {
     if (!id) {
+      return;
+    }
+    if (isRemoteTrackId(id)) {
+      this.showToast('Nhạc phát từ Host LAN chỉ hỗ trợ nghe đọc (chưa lưu vào Yêu thích cục bộ).');
       return;
     }
     if (typeof window !== 'undefined' && window.losslessApi?.toggleFavoriteTrack) {
@@ -2258,6 +2292,9 @@ class UiStore {
   }
 
   isTrackIdPlayable(trackId: string): boolean {
+    if (isRemoteTrackId(trackId)) {
+      return connectStore.isRemoteTrackPlayable(trackId);
+    }
     const local = libraryStore.getTrackById(trackId);
     return Boolean(local && local.status === 'available');
   }
@@ -2325,6 +2362,14 @@ class UiStore {
   }
 
   async playQueueEntry(entry: PlaybackQueueEntry): Promise<void> {
+    if (isRemoteTrackId(entry.trackId)) {
+      this.setState({
+        activeSource: 'local',
+        sampleIsPlaying: false,
+      });
+      await playerActions.playQueueEntry(entry);
+      return;
+    }
     const localRecord = libraryStore.getTrackById(entry.trackId);
     if (localRecord) {
       this.setState({
@@ -2437,6 +2482,163 @@ class UiStore {
   toggleAutoNext(): void {
     const controls = playbackQueueController.toggleAutoNext();
     this.persistPlaybackControls(controls);
+  }
+
+  setAutoContinueEnabled(enabled: boolean): void {
+    const normalized = Boolean(enabled);
+    playerActions.setAutoContinueEnabled(normalized);
+    this.updatePreferences({ autoContinueEnabled: normalized });
+  }
+
+  private resolveTrackMetaForShuffle(trackId: string): SmartShuffleTrackMeta {
+    if (isRemoteTrackId(trackId)) {
+      const remote = connectStore.getRemoteTrackRecord(trackId);
+      return remote
+        ? {
+            trackId,
+            albumTitle: remote.album,
+            albumArtist: remote.album_artist ?? remote.artist,
+            artist: remote.artist,
+          }
+        : { trackId };
+    }
+    const local = libraryStore.getTrackById(trackId);
+    const override = this.state.metadataOverridesByTrackId[trackId];
+    if (!local) {
+      return {
+        trackId,
+        albumTitle: override?.albumOverride ?? null,
+        artist: override?.artistOverride ?? null,
+      };
+    }
+    return {
+      trackId,
+      albumTitle: override?.albumOverride ?? local.album,
+      albumArtist: local.album_artist ?? null,
+      artist: override?.artistOverride ?? local.artist,
+    };
+  }
+
+  private resolveAutoContinuePlan(
+    request: AutoContinueRequest,
+  ): AutoContinueResolution | null {
+    if (!request.lastTrackId || isRemoteTrackId(request.lastTrackId)) {
+      return null;
+    }
+    if (request.lastContext?.contextId?.startsWith('remote-')) {
+      return null;
+    }
+    const localAvailable = this.getUnifiedTracks().filter(
+      (t) => t.source === 'local' && t.status === 'available',
+    );
+    if (localAvailable.length === 0) {
+      return null;
+    }
+    if (localAvailable.length === 1 && localAvailable[0].id === request.lastTrackId) {
+      return null;
+    }
+
+    const MAX_CONTINUATION_WAVE = 64;
+
+    if (request.shuffleEnabled) {
+      const withoutLast = localAvailable.filter((t) => t.id !== request.lastTrackId);
+      const recentSet = new Set(request.recentTrackIds);
+      const nonRecent = withoutLast.filter((t) => !recentSet.has(t.id));
+      const candidatePool = nonRecent.length > 0 ? nonRecent : withoutLast;
+      if (candidatePool.length === 0) {
+        return null;
+      }
+
+      const shuffled = smartShuffleItems({
+        items: candidatePool,
+        getTrackMeta: (t) => ({
+          trackId: t.id,
+          albumKey: t.albumId,
+          albumTitle: t.albumTitle,
+          albumArtist: t.albumArtist ?? null,
+          artist: t.artist,
+        }),
+        anchorTrack: this.resolveTrackMetaForShuffle(request.lastTrackId),
+        recentTrackIds: request.recentTrackIds,
+      });
+      const wave = shuffled.slice(0, MAX_CONTINUATION_WAVE);
+      return {
+        context: {
+          contextId: `auto-continue-shuffle-${Date.now().toString(36)}`,
+          label: 'Phát tiếp từ Thư viện',
+          kind: 'library',
+          trackIds: wave.map((t) => t.id),
+        },
+        startTrackId: wave[0].id,
+      };
+    }
+
+    const anchorIdx = localAvailable.findIndex((t) => t.id === request.lastTrackId);
+    const startIdx = anchorIdx >= 0 ? (anchorIdx + 1) % localAvailable.length : 0;
+    const maxCount = Math.min(
+      MAX_CONTINUATION_WAVE,
+      anchorIdx >= 0 ? localAvailable.length - 1 : localAvailable.length,
+    );
+    const waveIds: string[] = [];
+    for (let offset = 0; offset < maxCount; offset += 1) {
+      const idx = (startIdx + offset) % localAvailable.length;
+      const track = localAvailable[idx];
+      if (track && track.id !== request.lastTrackId) {
+        waveIds.push(track.id);
+      }
+    }
+    if (waveIds.length === 0) {
+      return null;
+    }
+    return {
+      context: {
+        contextId: `auto-continue-seq-${Date.now().toString(36)}`,
+        label: 'Phát tiếp từ Thư viện',
+        kind: 'library',
+        trackIds: waveIds,
+      },
+      startTrackId: waveIds[0],
+    };
+  }
+
+  playRandomFromLibrary(): void {
+    const available = this.getUnifiedTracks().filter(
+      (t) => t.source === 'local' && t.status === 'available',
+    );
+    if (available.length === 0) {
+      this.showToast('Không có bài hát khả dụng trong thư viện để phát ngẫu nhiên.');
+      return;
+    }
+
+    const qState = playbackQueueController.getState();
+    const currentId = qState.currentEntry?.trackId ?? null;
+    const recentIds = qState.history.slice(-15).map((e) => e.trackId);
+    const anchorMeta = currentId ? this.resolveTrackMetaForShuffle(currentId) : null;
+
+    const previewShuffled = smartShuffleItems({
+      items: available,
+      getTrackMeta: (t) => ({
+        trackId: t.id,
+        albumKey: t.albumId,
+        albumTitle: t.albumTitle,
+        albumArtist: t.albumArtist ?? null,
+        artist: t.artist,
+      }),
+      anchorTrack: anchorMeta,
+      recentTrackIds: recentIds,
+    });
+
+    const pickedStart = previewShuffled[0];
+    this.playFromContext(
+      {
+        contextId: 'library-random',
+        label: 'Thư viện nhạc (Ngẫu nhiên)',
+        kind: 'library',
+        trackIds: available.map((t) => t.id),
+      },
+      pickedStart?.id,
+      true,
+    );
   }
 
   getActiveSampleTrack(): PrototypeTrack | null {
@@ -2554,12 +2756,14 @@ class UiStore {
     }
   }
 
-  playAlbum(albumId: string, shuffleFirst?: boolean): void {
+  getAlbumTracksSorted(albumId: string): PrototypeTrack[] {
     const allTracks = this.getUnifiedTracks();
+    return sortAlbumTracksCanonical(allTracks.filter((t) => t.albumId === albumId));
+  }
+
+  playAlbum(albumId: string, shuffleFirst?: boolean): void {
     const album = this.getAlbumById(albumId);
-    const tracks = allTracks.filter(
-      (t) => t.albumId === albumId && t.status === 'available',
-    );
+    const tracks = this.getAlbumTracksSorted(albumId).filter((t) => t.status === 'available');
     if (tracks.length === 0) {
       this.showToast('Không có bài hát khả dụng trong album này.');
       return;
@@ -2674,7 +2878,7 @@ class UiStore {
         artist: t.artist ?? 'Unknown Artist',
         albumTitle,
         albumArtist: t.album_artist ?? null,
-        trackNumber: t.track_number ?? index + 1,
+        trackNumber: t.track_number ?? null,
         trackTotal: t.track_total ?? null,
         discNumber: t.disc_number ?? null,
         discTotal: t.disc_total ?? null,

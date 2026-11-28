@@ -441,6 +441,18 @@ export function SettingsPage() {
                     testId="settings-auto-next-toggle"
                   />
                 </div>
+
+                <div className="border-t border-[var(--border-subtle)] pt-3.5">
+                  <SettingToggleRow
+                    variant="compact"
+                    label="Tự động phát tiếp khi hết danh sách"
+                    description="Khi hết bài cuối của Album, Playlist hoặc Hàng đợi và không bật lặp tất cả, tự động nối tiếp phát nhạc từ Thư viện nhạc (theo thứ tự hoặc phát ngẫu nhiên thông minh)."
+                    checked={ui.preferences.autoContinueEnabled ?? true}
+                    onChange={(next) => uiStore.setAutoContinueEnabled(next)}
+                    accentHex={userAccent.activeHex}
+                    testId="settings-auto-continue-toggle"
+                  />
+                </div>
               </div>
             </div>
           )}

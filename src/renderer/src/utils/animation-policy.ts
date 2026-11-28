@@ -35,10 +35,12 @@ export interface SidebarTransitionResolution {
 }
 
 /**
- * Resolves unified Sidebar visibility on route/mode transitions (`Phase 5.2.1B`):
- * When switching between Focus Vinyl (`focus-immediate`) and Standard Now Playing / Lyrics
- * (`standard-idle`) inside the Focus Player, the Sidebar stays uniformly hidden instead of
- * popping out for 3 seconds and shifting header controls.
+ * Resolves unified Sidebar visibility on route/mode transitions (`Phase 6.1.1 IMP-05`):
+ * - Leaving Now Playing / Focus Player restores docked Sidebar (`revealed: true`).
+ * - Entering Now Playing (Standard, Lyrics, or Focus Vinyl) hides Sidebar IMMEDIATELY (`0ms` delay,
+ *   zero 3s flash), revealing strictly on left-edge hover or `Alt+M` as a zero-shift overlay drawer.
+ * - Switching between Focus Vinyl (`focus-immediate`) and Standard Now Playing / Lyrics
+ *   (`standard-idle`) keeps Sidebar uniformly hidden.
  */
 export function resolveSidebarRevealedOnTransition(
   prevMode: SidebarAutoHideMode,
@@ -48,18 +50,12 @@ export function resolveSidebarRevealedOnTransition(
   if (nextMode === 'none') {
     return { revealed: true, scheduleHideMs: null };
   }
-  if (nextMode === 'focus-immediate') {
-    return { revealed: false, scheduleHideMs: null };
-  }
-  if (prevMode === 'focus-immediate') {
-    return { revealed: false, scheduleHideMs: null };
-  }
   if (prevMode !== nextMode) {
-    return { revealed: true, scheduleHideMs: STANDARD_ENTRY_IDLE_HIDE_MS };
+    return { revealed: false, scheduleHideMs: null };
   }
   return {
     revealed: prevRevealed,
-    scheduleHideMs: prevRevealed ? STANDARD_ENTRY_IDLE_HIDE_MS : null,
+    scheduleHideMs: null,
   };
 }
 

@@ -3,6 +3,8 @@ export const MEDIA_PROTOCOL_HOST = 'track';
 export const MEDIA_ARTWORK_HOST = 'artwork';
 export const MEDIA_PROFILE_HOST = 'profile';
 export const MEDIA_PLAYLIST_HOST = 'playlist';
+export const MEDIA_REMOTE_TRACK_HOST = 'remote-track';
+export const MEDIA_REMOTE_ARTWORK_HOST = 'remote-artwork';
 
 export type ArtworkSizeVariant = 'full' | 'thumb';
 export type ProfileMediaKind = 'avatar' | 'background' | 'font';
@@ -353,4 +355,144 @@ export function parsePlaylistArtworkRequestFromMediaUrl(
     hasVersionToken,
   };
 }
+
+export interface ParsedRemoteTrackMediaRequest {
+  hostId: string;
+  trackId: string;
+}
+
+export interface ParsedRemoteArtworkMediaRequest {
+  hostId: string;
+  trackId: string;
+  size: ArtworkSizeVariant;
+  hasVersionToken: boolean;
+}
+
+export function buildRemoteTrackMediaUrl(hostId: string, trackId: string): string {
+  if (!isValidTrackUuid(hostId) || !isValidTrackUuid(trackId)) {
+    throw new Error(`Invalid remote track media identifier: ${String(hostId)}/${String(trackId)}`);
+  }
+  return `${MEDIA_PROTOCOL_SCHEME}://${MEDIA_REMOTE_TRACK_HOST}/${hostId.toLowerCase()}/${trackId.toLowerCase()}`;
+}
+
+export function parseRemoteTrackMediaUrl(rawUrl: string): ParsedRemoteTrackMediaRequest | null {
+  if (typeof rawUrl !== 'string' || rawUrl.length > 180) {
+    return null;
+  }
+  if (
+    rawUrl.includes('..') ||
+    rawUrl.includes('\\') ||
+    /%2f|%5c|%00/i.test(rawUrl)
+  ) {
+    return null;
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+
+  if (
+    parsed.protocol !== `${MEDIA_PROTOCOL_SCHEME}:` ||
+    parsed.hostname !== MEDIA_REMOTE_TRACK_HOST ||
+    parsed.hash ||
+    parsed.username ||
+    parsed.password ||
+    parsed.port
+  ) {
+    return null;
+  }
+
+  if (parsed.search) {
+    for (const [key, val] of parsed.searchParams.entries()) {
+      if (key !== 'ho' || !/^[0-9]{1,9}$/.test(val)) {
+        return null;
+      }
+    }
+  }
+
+  const parts = parsed.pathname.slice(1).split('/');
+  if (parts.length !== 2 || !isValidTrackUuid(parts[0]) || !isValidTrackUuid(parts[1])) {
+    return null;
+  }
+
+  return {
+    hostId: parts[0].toLowerCase(),
+    trackId: parts[1].toLowerCase(),
+  };
+}
+
+export function buildRemoteArtworkMediaUrl(
+  hostId: string,
+  trackId: string,
+  size: ArtworkSizeVariant = 'full',
+  versionHash?: string | null,
+): string {
+  if (!isValidTrackUuid(hostId) || !isValidTrackUuid(trackId)) {
+    throw new Error(`Invalid remote artwork identifier: ${String(hostId)}/${String(trackId)}`);
+  }
+  const params = new URLSearchParams({ size });
+  if (versionHash && /^[0-9a-f]{4,64}$/i.test(versionHash)) {
+    params.set('v', versionHash.slice(0, 16));
+  }
+  return `${MEDIA_PROTOCOL_SCHEME}://${MEDIA_REMOTE_ARTWORK_HOST}/${hostId.toLowerCase()}/${trackId.toLowerCase()}?${params.toString()}`;
+}
+
+export function parseRemoteArtworkMediaUrl(rawUrl: string): ParsedRemoteArtworkMediaRequest | null {
+  if (typeof rawUrl !== 'string' || rawUrl.length > 240) {
+    return null;
+  }
+  if (
+    rawUrl.includes('..') ||
+    rawUrl.includes('\\') ||
+    /%2f|%5c|%00/i.test(rawUrl)
+  ) {
+    return null;
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+
+  if (
+    parsed.protocol !== `${MEDIA_PROTOCOL_SCHEME}:` ||
+    parsed.hostname !== MEDIA_REMOTE_ARTWORK_HOST ||
+    parsed.hash ||
+    parsed.username ||
+    parsed.password ||
+    parsed.port
+  ) {
+    return null;
+  }
+
+  const parts = parsed.pathname.slice(1).split('/');
+  if (parts.length !== 2 || !isValidTrackUuid(parts[0]) || !isValidTrackUuid(parts[1])) {
+    return null;
+  }
+
+  const rawSize = parsed.searchParams.get('size');
+  let size: ArtworkSizeVariant = 'full';
+  if (rawSize !== null) {
+    if (rawSize !== 'full' && rawSize !== 'thumb') {
+      return null;
+    }
+    size = rawSize;
+  }
+
+  const rawVersion = parsed.searchParams.get('v');
+  const hasVersionToken = Boolean(rawVersion && /^[0-9a-f]{4,64}$/i.test(rawVersion));
+
+  return {
+    hostId: parts[0].toLowerCase(),
+    trackId: parts[1].toLowerCase(),
+    size,
+    hasVersionToken,
+  };
+}
+
 

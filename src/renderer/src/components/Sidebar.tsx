@@ -6,6 +6,7 @@ import {
   Home,
   Library,
   Search,
+  Server,
   Settings,
   SlidersHorizontal,
 } from 'lucide-react';
@@ -48,13 +49,13 @@ export function Sidebar() {
   const autoHideMode = resolveSidebarAutoHideMode(ui.route, ui.nowPlayingMode);
   const isOverlayAutoHide = autoHideMode !== 'none';
 
-  const [overlayRevealed, setOverlayRevealed] = useState<boolean>(
-    autoHideMode !== 'focus-immediate',
-  );
+  const [overlayRevealed, setOverlayRevealed] = useState<boolean>(!isOverlayAutoHide);
   const prevAutoHideModeRef = useRef<SidebarAutoHideMode>(autoHideMode);
   const overlayRevealedRef = useRef<boolean>(overlayRevealed);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isPointerInsideRef = useRef(false);
+  const wasPointerInDockedSidebarRef = useRef(false);
+  const suppressInitialEdgeHoverRef = useRef(false);
   const hasFocusWithinRef = useRef(false);
   const asideRef = useRef<HTMLElement | null>(null);
 
@@ -83,11 +84,26 @@ export function Sidebar() {
     [clearHideTimer, setRevealedSynced],
   );
 
-  // Mode transition lifecycle:
-  // - Leaving Now Playing: reset to revealed static sidebar.
-  // - Entering Focus Vinyl: hide IMMEDIATELY with zero idle timer!
+  // Clear edge-hover suppression once pointer moves outside the left edge hotspot (> 20px)
+  useEffect(() => {
+    if (!isOverlayAutoHide) {
+      suppressInitialEdgeHoverRef.current = false;
+      return;
+    }
+    const handlePointerMove = (event: PointerEvent) => {
+      if (suppressInitialEdgeHoverRef.current && event.clientX > 20) {
+        suppressInitialEdgeHoverRef.current = false;
+      }
+    };
+    window.addEventListener('pointermove', handlePointerMove, { passive: true });
+    return () => window.removeEventListener('pointermove', handlePointerMove);
+  }, [isOverlayAutoHide]);
+
+  // Mode transition lifecycle (Phase 6.1.1 IMP-05):
+  // - Leaving Now Playing: restore static docked sidebar.
+  // - Entering Standard Now Playing, Lyrics, or Focus Vinyl: hide IMMEDIATELY with zero flash/timer!
+  // - If pointer was already inside Sidebar on entry, keep Sidebar hidden until pointer leaves edge & re-enters.
   // - Switching between Focus Vinyl & Now Playing / Lyrics: keep Sidebar hidden uniformly.
-  // - Entering Standard Now Playing from outside: display cleanly for ~3s orientation, then auto-hide.
   useEffect(() => {
     clearHideTimer();
     isPointerInsideRef.current = false;
@@ -96,16 +112,16 @@ export function Sidebar() {
     const prevMode = prevAutoHideModeRef.current;
     prevAutoHideModeRef.current = autoHideMode;
 
-    if (prevMode === autoHideMode && autoHideMode === 'standard-idle' && !overlayRevealedRef.current) {
-      return () => {
-        clearHideTimer();
-      };
+    if (prevMode === 'none' && autoHideMode !== 'none' && wasPointerInDockedSidebarRef.current) {
+      suppressInitialEdgeHoverRef.current = true;
     }
+    wasPointerInDockedSidebarRef.current = false;
 
-    const transition =
-      prevMode === autoHideMode && autoHideMode === 'standard-idle'
-        ? { revealed: true, scheduleHideMs: STANDARD_ENTRY_IDLE_HIDE_MS }
-        : resolveSidebarRevealedOnTransition(prevMode, autoHideMode, overlayRevealedRef.current);
+    const transition = resolveSidebarRevealedOnTransition(
+      prevMode,
+      autoHideMode,
+      overlayRevealedRef.current,
+    );
 
     setRevealedSynced(transition.revealed);
     if (transition.scheduleHideMs !== null) {
@@ -198,6 +214,13 @@ export function Sidebar() {
       isActive: (route) => route === 'audio-lab',
       onClick: () => uiStore.navigate('audio-lab'),
     },
+    {
+      id: 'server',
+      label: 'DoReMi Connect — Máy chủ cá nhân & LAN',
+      icon: Server,
+      isActive: (route) => route === 'server',
+      onClick: () => uiStore.navigate('server'),
+    },
   ];
 
   const utilityItems: NavItem[] = [
@@ -231,10 +254,16 @@ export function Sidebar() {
           data-testid="focus-sidebar-edge-trigger"
           aria-hidden="true"
           onMouseEnter={() => {
+            if (suppressInitialEdgeHoverRef.current) {
+              return;
+            }
             clearHideTimer();
             setRevealedSynced(true);
           }}
-          className="fixed inset-y-12 left-0 z-35 w-[12px] bg-transparent"
+          onMouseLeave={() => {
+            suppressInitialEdgeHoverRef.current = false;
+          }}
+          className="fixed inset-y-0 left-0 z-35 w-[10px] bg-transparent"
         />
       )}
 
@@ -267,17 +296,20 @@ export function Sidebar() {
         data-focus-autohide={autoHideMode === 'focus-immediate' ? 'true' : 'false'}
         data-revealed={isVisible ? 'true' : 'false'}
         onMouseEnter={() => {
+          wasPointerInDockedSidebarRef.current = true;
           if (!isOverlayAutoHide) return;
           isPointerInsideRef.current = true;
           clearHideTimer();
           setRevealedSynced(true);
         }}
         onPointerDownCapture={() => {
+          wasPointerInDockedSidebarRef.current = true;
           if (!isOverlayAutoHide) return;
           isPointerInsideRef.current = true;
           clearHideTimer();
         }}
         onMouseLeave={() => {
+          wasPointerInDockedSidebarRef.current = false;
           if (!isOverlayAutoHide) return;
           isPointerInsideRef.current = false;
           scheduleHide(OVERLAY_LEAVE_HIDE_DELAY_MS);

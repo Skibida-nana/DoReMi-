@@ -20,9 +20,11 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
+import { isRemoteTrackId } from '../../../shared/contracts/connect-api';
 import type { PlaybackQueueEntry } from '../../../shared/types/player';
 import { DEFAULT_DOREMI_ARTWORK_URL } from '../assets/default-artwork';
 import type { PrototypeTrack } from '../data/prototype-catalog';
+import { connectStore, useConnectState } from '../stores/connect-store';
 import { useLibraryState } from '../stores/library-store';
 import {
   usePlaybackQueueState,
@@ -60,6 +62,7 @@ export function PlaybackQueuePanel({
   const localPlaybackStatus = usePlaybackStatus();
   const ui = useUiState();
   const library = useLibraryState();
+  const connect = useConnectState();
 
   const rowHeightPx = variant === 'tab' ? 54 : 58;
   const [historyCollapsed, setHistoryCollapsed] = useState(true);
@@ -93,15 +96,39 @@ export function PlaybackQueuePanel({
   const isActivelyPlaying = effectiveStatus === 'playing';
   const isErrorState = isLocalSource && localPlaybackStatus === 'error';
 
-  // O(1) lookup map across local + sample tracks (NEVER recomputed on timeupdate ticks)
+  // O(1) lookup map across local + active remote tracks (NEVER recomputed on timeupdate ticks)
   const trackMap = useMemo(() => {
     const unified = uiStore.getUnifiedTracks();
     const map = new Map<string, PrototypeTrack>();
     for (const track of unified) {
       map.set(track.id, track);
     }
+    if (queueState.currentEntry && isRemoteTrackId(queueState.currentEntry.trackId)) {
+      const rt = connectStore.getPrototypeTrack(queueState.currentEntry.trackId);
+      if (rt) map.set(rt.id, rt);
+    }
+    for (const entry of queueState.upcoming) {
+      if (isRemoteTrackId(entry.trackId) && !map.has(entry.trackId)) {
+        const rt = connectStore.getPrototypeTrack(entry.trackId);
+        if (rt) map.set(rt.id, rt);
+      }
+    }
+    for (const entry of queueState.history) {
+      if (isRemoteTrackId(entry.trackId) && !map.has(entry.trackId)) {
+        const rt = connectStore.getPrototypeTrack(entry.trackId);
+        if (rt) map.set(rt.id, rt);
+      }
+    }
     return map;
-  }, [library.tracks, ui.metadataOverridesByTrackId, ui.customCoversByTrackId]);
+  }, [
+    library.tracks,
+    ui.metadataOverridesByTrackId,
+    ui.customCoversByTrackId,
+    connect.remoteTracks,
+    queueState.currentEntry,
+    queueState.upcoming,
+    queueState.history,
+  ]);
 
   const { history, currentEntry, upcoming, controls, context } = queueState;
   const sourceContextBefore = queueState.sourceContextBefore ?? [];
