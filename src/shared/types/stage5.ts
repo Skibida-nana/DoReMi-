@@ -89,6 +89,7 @@ export interface PersonalizationPreferences {
   playbackControls?: PlaybackControlState;
   autoScanFolders?: boolean;
   resumePlaybackOnStartup?: boolean;
+  autoContinueEnabled?: boolean;
   editorialTypography: EditorialTypographySettings;
   editorialFonts: CustomEditorialFontRecord[];
 }

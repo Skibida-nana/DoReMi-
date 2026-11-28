@@ -226,6 +226,7 @@ export const DEFAULT_PERSONALIZATION_PREFERENCES: PersonalizationPreferences = {
   replayGain: { ...DEFAULT_REPLAYGAIN_SETTINGS },
   audioLab: createDefaultAudioLabSettings(),
   playbackControls: { ...DEFAULT_PLAYBACK_CONTROLS },
+  autoContinueEnabled: true,
   editorialTypography: { ...DEFAULT_EDITORIAL_TYPOGRAPHY },
   editorialFonts: [],
 };
@@ -561,6 +562,10 @@ export class ProfileService {
       replayGain: normalizeReplayGainSettings(stored.replayGain),
       audioLab: normalizeAudioLabSettings(stored.audioLab),
       playbackControls: normalizePlaybackControls(stored.playbackControls),
+      autoContinueEnabled:
+        typeof stored.autoContinueEnabled === 'boolean'
+          ? stored.autoContinueEnabled
+          : DEFAULT_PERSONALIZATION_PREFERENCES.autoContinueEnabled,
       editorialTypography: normalizeEditorialTypographySettings(
         stored.editorialTypography,
         validFontIds,
@@ -619,6 +624,9 @@ export class ProfileService {
     }
     if (!VALID_QUALITY_PRESETS.has(merged.uiQualityPreset)) {
       merged.uiQualityPreset = current.uiQualityPreset;
+    }
+    if (typeof merged.autoContinueEnabled !== 'boolean') {
+      merged.autoContinueEnabled = current.autoContinueEnabled ?? true;
     }
 
     this.writePreferenceJson('personalization', merged);

@@ -5,6 +5,7 @@ import { OVERLAY_Z_INDEX, OverlayHostProvider } from '../components/OverlayLayer
 import { Sidebar } from '../components/Sidebar';
 import { TopHeader } from '../components/TopHeader';
 import { HomePage } from '../pages/HomePage';
+import { connectStore } from '../stores/connect-store';
 import { libraryStore } from '../stores/library-store';
 import { uiStore, useUiState } from '../stores/ui-store';
 import { useForegroundResumeState, useUiAnimationPolicy } from '../utils/animation-policy';
@@ -39,6 +40,9 @@ const SearchPage = lazy(() =>
 const SettingsPage = lazy(() =>
   import('../pages/SettingsPage').then((m) => ({ default: m.SettingsPage })),
 );
+const ServerPage = lazy(() =>
+  import('../pages/ServerPage').then((m) => ({ default: m.ServerPage })),
+);
 const StatisticsPage = lazy(() =>
   import('../pages/StatisticsPage').then((m) => ({ default: m.StatisticsPage })),
 );
@@ -61,8 +65,10 @@ export function App() {
   useEffect(() => {
     void libraryStore.initialize();
     void uiStore.hydrateFromDesktop();
+    void connectStore.initialize();
     return () => {
       libraryStore.dispose();
+      connectStore.dispose();
     };
   }, []);
 
@@ -111,6 +117,8 @@ export function App() {
         return <SearchPage />;
       case 'statistics':
         return <StatisticsPage />;
+      case 'server':
+        return <ServerPage />;
       case 'settings':
         return <SettingsPage />;
       case 'profile':

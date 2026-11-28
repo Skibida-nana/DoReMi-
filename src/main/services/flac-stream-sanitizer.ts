@@ -5,7 +5,8 @@ import { Readable } from 'node:stream';
 const FLAC_MAGIC = Buffer.from('fLaC', 'ascii');
 const MAX_FLAC_METADATA_BLOCKS = 128;
 const MAX_NORMALIZED_HEADER_BYTES = 16 * 1024 * 1024;
-const MAX_HEADER_CACHE_ENTRIES = 64;
+const MAX_HEADER_CACHE_ENTRIES = 48;
+const MAX_HEADER_CACHE_TOTAL_BYTES = 8 * 1024 * 1024;
 const MAX_ID3_PADDING_SCAN_BYTES = 4096;
 
 const CHROMIUM_SAFE_PICTURE_MIMES = new Set([
@@ -37,6 +38,11 @@ export type FlacStreamPlan =
     };
 
 const headerPlanCache = new Map<string, FlacStreamPlan>();
+let cachedHeaderTotalBytes = 0;
+
+function planHeaderBytes(plan: FlacStreamPlan): number {
+  return plan.normalized ? plan.headerBuffer.length : 0;
+}
 
 function buildCacheKey(filePath: string, fileSize: number, mtimeMs: number): string {
   return `${filePath}::${fileSize}::${Math.round(mtimeMs)}`;
@@ -54,23 +60,64 @@ function getCachedPlan(key: string): FlacStreamPlan | undefined {
 }
 
 function setCachedPlan(key: string, plan: FlacStreamPlan): void {
-  if (headerPlanCache.has(key)) {
+  const existing = headerPlanCache.get(key);
+  if (existing) {
+    cachedHeaderTotalBytes = Math.max(0, cachedHeaderTotalBytes - planHeaderBytes(existing));
     headerPlanCache.delete(key);
   }
-  headerPlanCache.set(key, plan);
-  if (headerPlanCache.size > MAX_HEADER_CACHE_ENTRIES) {
+  const incomingBytes = planHeaderBytes(plan);
+  if (incomingBytes > MAX_HEADER_CACHE_TOTAL_BYTES) {
+    return;
+  }
+  while (
+    headerPlanCache.size > 0 &&
+    (headerPlanCache.size >= MAX_HEADER_CACHE_ENTRIES ||
+      cachedHeaderTotalBytes + incomingBytes > MAX_HEADER_CACHE_TOTAL_BYTES)
+  ) {
     const oldestKey = headerPlanCache.keys().next().value;
-    if (oldestKey !== undefined) {
-      headerPlanCache.delete(oldestKey);
+    if (oldestKey === undefined) {
+      break;
+    }
+    const oldestPlan = headerPlanCache.get(oldestKey);
+    headerPlanCache.delete(oldestKey);
+    if (oldestPlan) {
+      cachedHeaderTotalBytes = Math.max(0, cachedHeaderTotalBytes - planHeaderBytes(oldestPlan));
     }
   }
+  headerPlanCache.set(key, plan);
+  cachedHeaderTotalBytes += incomingBytes;
 }
 
 export function clearFlacSanitizerCache(): void {
   headerPlanCache.clear();
+  cachedHeaderTotalBytes = 0;
 }
 
-async function readExactAt(
+export function invalidateFlacPlansByPrefix(prefix: string): number {
+  let removed = 0;
+  for (const [key, plan] of headerPlanCache.entries()) {
+    if (key.startsWith(prefix)) {
+      headerPlanCache.delete(key);
+      cachedHeaderTotalBytes = Math.max(0, cachedHeaderTotalBytes - planHeaderBytes(plan));
+      removed += 1;
+    }
+  }
+  return removed;
+}
+
+export function getFlacSanitizerCacheStats(): { entries: number; headerBytes: number } {
+  return {
+    entries: headerPlanCache.size,
+    headerBytes: cachedHeaderTotalBytes,
+  };
+}
+
+export interface FlacByteSource {
+  readonly fileSize: number;
+  readAt(offset: number, length: number): Promise<Buffer>;
+}
+
+async function readExactFromHandle(
   handle: fsPromises.FileHandle,
   offset: number,
   length: number,
@@ -88,14 +135,13 @@ async function readExactAt(
 }
 
 async function findFlacStreamOffset(
-  handle: fsPromises.FileHandle,
-  fileSize: number,
+  source: FlacByteSource,
 ): Promise<{ flacOffset: number; hasPrependedId3: boolean } | null> {
-  if (fileSize < 42) {
+  if (source.fileSize < 42) {
     return null;
   }
 
-  const head = await readExactAt(handle, 0, 10);
+  const head = await source.readAt(0, 10);
   if (head.length < 10) {
     return null;
   }
@@ -119,14 +165,14 @@ async function findFlacStreamOffset(
       const footerBytes = (flags & 0x10) !== 0 ? 10 : 0;
       const id3End = 10 + id3BodySize + footerBytes;
 
-      if (id3End + 42 <= fileSize) {
-        const scanLen = Math.min(MAX_ID3_PADDING_SCAN_BYTES, fileSize - id3End);
-        const probeBuf = await readExactAt(handle, id3End, scanLen);
+      if (id3End + 42 <= source.fileSize) {
+        const scanLen = Math.min(MAX_ID3_PADDING_SCAN_BYTES, source.fileSize - id3End);
+        const probeBuf = await source.readAt(id3End, scanLen);
         const relIndex = probeBuf.indexOf(FLAC_MAGIC);
         if (relIndex >= 0) {
           const candidateOffset = id3End + relIndex;
-          if (candidateOffset + 42 <= fileSize) {
-            const siHeader = await readExactAt(handle, candidateOffset + 4, 4);
+          if (candidateOffset + 42 <= source.fileSize) {
+            const siHeader = await source.readAt(candidateOffset + 4, 4);
             if (siHeader.length === 4) {
               const blockType = siHeader[0] & 0x7f;
               const blockLen = (siHeader[1] << 16) | (siHeader[2] << 8) | siHeader[3];
@@ -151,7 +197,7 @@ async function findFlacStreamOffset(
  * `DEMUXER_ERROR_COULD_NOT_OPEN` even though all lossless FLAC audio frames are valid.
  */
 async function isPictureBlockDemuxerSafe(
-  handle: fsPromises.FileHandle,
+  source: FlacByteSource,
   bodyOffset: number,
   blockLength: number,
 ): Promise<boolean> {
@@ -160,7 +206,7 @@ async function isPictureBlockDemuxerSafe(
   }
 
   // Read MIME length first
-  const headerSlice = await readExactAt(handle, bodyOffset, Math.min(blockLength, 128));
+  const headerSlice = await source.readAt(bodyOffset, Math.min(blockLength, 128));
   if (headerSlice.length < 32) {
     return false;
   }
@@ -185,7 +231,7 @@ async function isPictureBlockDemuxerSafe(
   const descSlice =
     descOffset + 4 <= headerSlice.length
       ? headerSlice
-      : await readExactAt(handle, bodyOffset + descOffset, 4);
+      : await source.readAt(bodyOffset + descOffset, 4);
   if (descSlice.length < 4) {
     return false;
   }
@@ -199,7 +245,7 @@ async function isPictureBlockDemuxerSafe(
     return false;
   }
 
-  const dataLenBuf = await readExactAt(handle, bodyOffset + dataLenOffset, 4);
+  const dataLenBuf = await source.readAt(bodyOffset + dataLenOffset, 4);
   if (dataLenBuf.length < 4) {
     return false;
   }
@@ -213,22 +259,14 @@ async function isPictureBlockDemuxerSafe(
 }
 
 /**
- * Inspects a FLAC file header (read-only) and produces a virtual sanitized header
- * plan ONLY when container metadata contains known Chromium FFmpegDemuxer breakers
- * (empty/unsupported PICTURE MIME blocks or prepended ID3v2 tags).
- *
- * Guarantees:
- * - Source file on disk is NEVER modified.
- * - Healthy FLAC files return `{ normalized: false }` for zero-copy raw file streaming.
- * - All lossless audio frames (`STREAMINFO`, `SEEKTABLE`, `VORBIS_COMMENT`, and every frame
- *   from `diskAudioOffset` to EOF) remain 100% bit-for-bit untouched.
+ * Inspects a FLAC byte source (read-only, local file handle or remote Range source)
+ * and builds a cached virtual sanitized header plan ONLY when container metadata contains
+ * Chromium FFmpegDemuxer breakers (empty/unsupported PICTURE MIME or prepended ID3v2 tags).
  */
-export async function resolveFlacStreamPlan(
-  filePath: string,
-  fileSize: number,
-  mtimeMs: number,
+export async function resolveFlacStreamPlanFromSource(
+  cacheKey: string,
+  source: FlacByteSource,
 ): Promise<FlacStreamPlan> {
-  const cacheKey = buildCacheKey(filePath, fileSize, mtimeMs);
   const cached = getCachedPlan(cacheKey);
   if (cached) {
     return cached;
@@ -236,13 +274,11 @@ export async function resolveFlacStreamPlan(
 
   const passthrough: FlacStreamPlan = {
     normalized: false,
-    virtualFileSize: fileSize,
+    virtualFileSize: source.fileSize,
   };
 
-  let handle: fsPromises.FileHandle | null = null;
   try {
-    handle = await fsPromises.open(filePath, 'r');
-    const located = await findFlacStreamOffset(handle, fileSize);
+    const located = await findFlacStreamOffset(source);
     if (!located) {
       setCachedPlan(cacheKey, passthrough);
       return passthrough;
@@ -255,12 +291,12 @@ export async function resolveFlacStreamPlan(
     let strippedPictureBlocks = 0;
 
     while (!isLast && blocks.length < MAX_FLAC_METADATA_BLOCKS) {
-      if (pos + 4 > fileSize) {
+      if (pos + 4 > source.fileSize) {
         setCachedPlan(cacheKey, passthrough);
         return passthrough;
       }
 
-      const hdr = await readExactAt(handle, pos, 4);
+      const hdr = await source.readAt(pos, 4);
       if (hdr.length < 4) {
         setCachedPlan(cacheKey, passthrough);
         return passthrough;
@@ -271,7 +307,7 @@ export async function resolveFlacStreamPlan(
       const blockLength = (hdr[1] << 16) | (hdr[2] << 8) | hdr[3];
       const bodyDiskOffset = pos + 4;
 
-      if (bodyDiskOffset + blockLength > fileSize) {
+      if (bodyDiskOffset + blockLength > source.fileSize) {
         setCachedPlan(cacheKey, passthrough);
         return passthrough;
       }
@@ -285,7 +321,7 @@ export async function resolveFlacStreamPlan(
       let omitFromPlaybackStream = false;
       if (blockType === 6) {
         const pictureSafe = await isPictureBlockDemuxerSafe(
-          handle,
+          source,
           bodyDiskOffset,
           blockLength,
         );
@@ -340,7 +376,7 @@ export async function resolveFlacStreamPlan(
       headerParts.push(blockHdr);
 
       if (block.length > 0) {
-        const bodyBuf = await readExactAt(handle, block.bodyDiskOffset, block.length);
+        const bodyBuf = await source.readAt(block.bodyDiskOffset, block.length);
         if (bodyBuf.length !== block.length) {
           setCachedPlan(cacheKey, passthrough);
           return passthrough;
@@ -351,7 +387,7 @@ export async function resolveFlacStreamPlan(
 
     const headerBuffer = Buffer.concat(headerParts);
     const diskAudioOffset = pos;
-    const audioPayloadBytes = Math.max(0, fileSize - diskAudioOffset);
+    const audioPayloadBytes = Math.max(0, source.fileSize - diskAudioOffset);
 
     const plan: FlacStreamPlan = {
       normalized: true,
@@ -366,6 +402,33 @@ export async function resolveFlacStreamPlan(
     return plan;
   } catch {
     return passthrough;
+  }
+}
+
+export async function resolveFlacStreamPlan(
+  filePath: string,
+  fileSize: number,
+  mtimeMs: number,
+): Promise<FlacStreamPlan> {
+  const cacheKey = buildCacheKey(filePath, fileSize, mtimeMs);
+  const cached = getCachedPlan(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  let handle: fsPromises.FileHandle | null = null;
+  try {
+    handle = await fsPromises.open(filePath, 'r');
+    const source: FlacByteSource = {
+      fileSize,
+      readAt: (offset, length) => readExactFromHandle(handle!, offset, length),
+    };
+    return await resolveFlacStreamPlanFromSource(cacheKey, source);
+  } catch {
+    return {
+      normalized: false,
+      virtualFileSize: fileSize,
+    };
   } finally {
     if (handle) {
       await handle.close().catch(() => {});

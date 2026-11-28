@@ -20,6 +20,7 @@ import type {
 } from '../shared/types/stage5';
 import type { DiagnosticRecordInput, RelinkApplySelection } from '../shared/types/stage6';
 import type { TrackMetadataOverrideInput } from '../shared/types/track';
+import type { ConnectClientSnapshot, HostSnapshot } from '../shared/types/connect';
 
 /**
  * Exposes a strictly typed, minimal API surface to the sandboxed Renderer.
@@ -211,6 +212,116 @@ const losslessApi: LosslessDesktopApi = {
 
   setFavoriteTracks: (trackIds: readonly string[], favorite: boolean) =>
     ipcRenderer.invoke(IPC_CHANNELS.FAVORITE_SET_MANY, trackIds, favorite),
+
+  // Phase 6.1: DoReMi Connect
+  connectGetHostSnapshot: () => ipcRenderer.invoke(IPC_CHANNELS.CONNECT_HOST_GET_SNAPSHOT),
+  connectStartHost: () => ipcRenderer.invoke(IPC_CHANNELS.CONNECT_HOST_START),
+  connectStopHost: () => ipcRenderer.invoke(IPC_CHANNELS.CONNECT_HOST_STOP),
+  connectUpdateHostConfig: (patch) =>
+    ipcRenderer.invoke(IPC_CHANNELS.CONNECT_HOST_UPDATE_CONFIG, patch),
+  connectAddSharedSource: (rootId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.CONNECT_HOST_ADD_SHARED_SOURCE, rootId),
+  connectRemoveSharedSource: (rootId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.CONNECT_HOST_REMOVE_SHARED_SOURCE, rootId),
+  connectCreateInvitation: (options) =>
+    ipcRenderer.invoke(IPC_CHANNELS.CONNECT_HOST_CREATE_INVITATION, options),
+  connectRevokeInvitation: () => ipcRenderer.invoke(IPC_CHANNELS.CONNECT_HOST_REVOKE_INVITATION),
+  connectApproveEnrollment: (requestId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.CONNECT_HOST_APPROVE_ENROLLMENT, requestId),
+  connectRejectEnrollment: (requestId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.CONNECT_HOST_REJECT_ENROLLMENT, requestId),
+  connectRenameDevice: (deviceId: string, displayName: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.CONNECT_HOST_RENAME_DEVICE, deviceId, displayName),
+  connectDisconnectDevice: (deviceId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.CONNECT_HOST_DISCONNECT_DEVICE, deviceId),
+  connectRevokeDevice: (deviceId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.CONNECT_HOST_REVOKE_DEVICE, deviceId),
+  connectRemoveDevice: (deviceId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.CONNECT_HOST_REMOVE_DEVICE, deviceId),
+  connectSetDeviceRemoteAccess: (deviceId: string, enabled: boolean) =>
+    ipcRenderer.invoke(IPC_CHANNELS.CONNECT_HOST_SET_DEVICE_REMOTE_ACCESS, deviceId, enabled),
+  connectCheckRemoteProvider: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.CONNECT_HOST_CHECK_REMOTE_PROVIDER),
+  connectEnableRemoteAccess: (options) =>
+    ipcRenderer.invoke(IPC_CHANNELS.CONNECT_HOST_ENABLE_REMOTE_ACCESS, options),
+  connectDisableRemoteAccess: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.CONNECT_HOST_DISABLE_REMOTE_ACCESS),
+  connectRotateHostIdentity: () => ipcRenderer.invoke(IPC_CHANNELS.CONNECT_HOST_ROTATE_IDENTITY),
+  connectSetHostPowerPolicy: (
+    policy: 'follow-system' | 'keep-awake-streaming' | 'keep-awake-host-on',
+  ) => ipcRenderer.invoke(IPC_CHANNELS.CONNECT_HOST_SET_POWER_POLICY, policy),
+  connectGetHostResourceBreakdown: (options?: { includeTailscaleProcesses?: boolean }) =>
+    ipcRenderer.invoke(IPC_CHANNELS.CONNECT_HOST_GET_RESOURCE_BREAKDOWN, options),
+  onConnectHostStateChanged: (callback: (snapshot: HostSnapshot) => void) => {
+    const listener = (_ipcEvent: IpcRendererEvent, payload: HostSnapshot) => {
+      callback(payload);
+    };
+    ipcRenderer.on(IPC_CHANNELS.CONNECT_HOST_STATE_CHANGED, listener);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.CONNECT_HOST_STATE_CHANGED, listener);
+    };
+  },
+
+  connectGetClientSnapshot: () => ipcRenderer.invoke(IPC_CHANNELS.CONNECT_CLIENT_GET_SNAPSHOT),
+  connectDiscoverHosts: (timeoutMs?: number) =>
+    ipcRenderer.invoke(IPC_CHANNELS.CONNECT_CLIENT_DISCOVER, timeoutMs),
+  connectProbeHost: (address: string, port: number) =>
+    ipcRenderer.invoke(IPC_CHANNELS.CONNECT_CLIENT_PROBE_HOST, address, port),
+  connectEnrollWithHost: (input) =>
+    ipcRenderer.invoke(IPC_CHANNELS.CONNECT_CLIENT_ENROLL, input),
+  connectEnrollFromPairingPayload: (input) =>
+    ipcRenderer.invoke(IPC_CHANNELS.CONNECT_CLIENT_ENROLL_PAYLOAD, input),
+  connectToRememberedHost: (
+    hostId: string,
+    overrideAddress?: string,
+    overridePort?: number,
+    explicitMode?: 'lan-direct' | 'remote-https',
+  ) =>
+    ipcRenderer.invoke(
+      IPC_CHANNELS.CONNECT_CLIENT_CONNECT,
+      hostId,
+      overrideAddress,
+      overridePort,
+      explicitMode,
+    ),
+  connectSyncRemoteAccess: (hostId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.CONNECT_CLIENT_SYNC_REMOTE_ACCESS, hostId),
+  connectSetPreferredTransport: (hostId: string, mode: 'lan-direct' | 'remote-https') =>
+    ipcRenderer.invoke(IPC_CHANNELS.CONNECT_CLIENT_SET_PREFERRED_TRANSPORT, hostId, mode),
+  connectSetConnectionMode: (
+    hostId: string,
+    mode: 'automatic' | 'lan-only' | 'remote-only',
+  ) => ipcRenderer.invoke(IPC_CHANNELS.CONNECT_CLIENT_SET_CONNECTION_MODE, hostId, mode),
+  connectManualReconnect: () => ipcRenderer.invoke(IPC_CHANNELS.CONNECT_CLIENT_MANUAL_RECONNECT),
+  connectNotifyNetworkHint: (hint: 'online' | 'offline' | 'recheck') =>
+    ipcRenderer.invoke(IPC_CHANNELS.CONNECT_CLIENT_NOTIFY_NETWORK_HINT, hint),
+  connectVerifyTrackSource: (params) =>
+    ipcRenderer.invoke(IPC_CHANNELS.CONNECT_CLIENT_VERIFY_TRACK_SOURCE, params),
+  connectRecordHandoverOutcome: (params) =>
+    ipcRenderer.invoke(IPC_CHANNELS.CONNECT_CLIENT_RECORD_HANDOVER_OUTCOME, params),
+  connectRotateHostToken: () => ipcRenderer.invoke(IPC_CHANNELS.CONNECT_CLIENT_ROTATE_TOKEN),
+  connectDisconnectClient: () => ipcRenderer.invoke(IPC_CHANNELS.CONNECT_CLIENT_DISCONNECT),
+  connectRemoveRememberedHost: (hostId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.CONNECT_CLIENT_REMOVE_REMEMBERED, hostId),
+  connectListRemoteTracks: (options) =>
+    ipcRenderer.invoke(IPC_CHANNELS.CONNECT_CLIENT_LIST_TRACKS, options),
+  connectListRemoteAlbums: (options) =>
+    ipcRenderer.invoke(IPC_CHANNELS.CONNECT_CLIENT_LIST_ALBUMS, options),
+  connectListRemoteArtists: (options) =>
+    ipcRenderer.invoke(IPC_CHANNELS.CONNECT_CLIENT_LIST_ARTISTS, options),
+  connectGetRemoteLyrics: (hostId: string, trackId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.CONNECT_CLIENT_GET_LYRICS, hostId, trackId),
+  connectGetClientDiagnostics: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.CONNECT_CLIENT_GET_DIAGNOSTICS),
+  onConnectClientStateChanged: (callback: (snapshot: ConnectClientSnapshot) => void) => {
+    const listener = (_ipcEvent: IpcRendererEvent, payload: ConnectClientSnapshot) => {
+      callback(payload);
+    };
+    ipcRenderer.on(IPC_CHANNELS.CONNECT_CLIENT_STATE_CHANGED, listener);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.CONNECT_CLIENT_STATE_CHANGED, listener);
+    };
+  },
 };
 
 contextBridge.exposeInMainWorld('losslessApi', losslessApi);

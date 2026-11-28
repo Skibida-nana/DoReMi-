@@ -447,6 +447,106 @@ export const MIGRATIONS: readonly MigrationDefinition[] = [
       `);
     },
   },
+  {
+    version: 9,
+    name: '009_phase61_connect_hybrid_server',
+    up(db: Database.Database): void {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS connect_host_config (
+          id INTEGER PRIMARY KEY CHECK (id = 1),
+          enabled INTEGER NOT NULL DEFAULT 0,
+          auto_start INTEGER NOT NULL DEFAULT 0,
+          display_name TEXT NOT NULL DEFAULT 'DoReMi Desktop',
+          port INTEGER NOT NULL DEFAULT 48620,
+          bind_address TEXT NOT NULL DEFAULT 'auto-private',
+          max_active_clients INTEGER NOT NULL DEFAULT 3,
+          max_requests_per_device INTEGER NOT NULL DEFAULT 4,
+          max_global_requests INTEGER NOT NULL DEFAULT 12,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS connect_shared_sources (
+          id TEXT PRIMARY KEY,
+          root_id TEXT NOT NULL UNIQUE REFERENCES library_roots(id) ON DELETE CASCADE,
+          enabled INTEGER NOT NULL DEFAULT 1,
+          added_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_connect_shared_sources_root
+          ON connect_shared_sources(root_id);
+
+        CREATE TABLE IF NOT EXISTS connect_authorized_devices (
+          device_id TEXT PRIMARY KEY,
+          display_name TEXT NOT NULL,
+          platform TEXT NOT NULL,
+          auth_state TEXT NOT NULL DEFAULT 'authorized'
+            CHECK (auth_state IN ('authorized', 'revoked')),
+          token_hash TEXT NOT NULL,
+          token_salt TEXT NOT NULL,
+          enrolled_at TEXT NOT NULL,
+          last_activity_at TEXT,
+          last_ip TEXT,
+          revoked_at TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_connect_authorized_devices_state
+          ON connect_authorized_devices(auth_state);
+
+        CREATE TABLE IF NOT EXISTS connect_remembered_hosts (
+          host_id TEXT PRIMARY KEY,
+          display_name TEXT NOT NULL,
+          last_address TEXT NOT NULL,
+          port INTEGER NOT NULL,
+          pinned_fingerprint TEXT NOT NULL,
+          short_fingerprint TEXT NOT NULL,
+          device_id TEXT NOT NULL,
+          api_version TEXT NOT NULL DEFAULT '1',
+          credential_ref TEXT NOT NULL,
+          last_connected_at TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+      `);
+    },
+  },
+  {
+    version: 10,
+    name: '010_phase63_remote_https_access',
+    up(db: Database.Database): void {
+      db.exec(`
+        ALTER TABLE connect_host_config
+          ADD COLUMN remote_provider TEXT NOT NULL DEFAULT 'tailscale-funnel';
+        ALTER TABLE connect_host_config
+          ADD COLUMN remote_public_port INTEGER NOT NULL DEFAULT 443;
+        ALTER TABLE connect_host_config
+          ADD COLUMN remote_mount_path TEXT NOT NULL DEFAULT '/doremi-connect';
+        ALTER TABLE connect_host_config
+          ADD COLUMN remote_endpoint_generation INTEGER NOT NULL DEFAULT 1;
+        ALTER TABLE connect_host_config
+          ADD COLUMN remote_owned_route_json TEXT;
+        ALTER TABLE connect_host_config
+          ADD COLUMN remote_user_acknowledged INTEGER NOT NULL DEFAULT 0;
+
+        ALTER TABLE connect_authorized_devices
+          ADD COLUMN remote_access_enabled INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE connect_authorized_devices
+          ADD COLUMN remote_token_hash TEXT NOT NULL DEFAULT '';
+        ALTER TABLE connect_authorized_devices
+          ADD COLUMN remote_token_salt TEXT NOT NULL DEFAULT '';
+        ALTER TABLE connect_authorized_devices
+          ADD COLUMN remote_granted_at TEXT;
+
+        ALTER TABLE connect_remembered_hosts
+          ADD COLUMN preferred_transport TEXT NOT NULL DEFAULT 'lan-direct';
+        ALTER TABLE connect_remembered_hosts
+          ADD COLUMN remote_descriptor_json TEXT;
+        ALTER TABLE connect_remembered_hosts
+          ADD COLUMN remote_credential_ref TEXT;
+        ALTER TABLE connect_remembered_hosts
+          ADD COLUMN last_remote_connected_at TEXT;
+      `);
+    },
+  },
 ];
 
 export interface AppliedMigrationRecord {

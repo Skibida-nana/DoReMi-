@@ -4,12 +4,15 @@ import {
   MEDIA_PLAYLIST_HOST,
   MEDIA_PROFILE_HOST,
   MEDIA_PROTOCOL_SCHEME,
+  MEDIA_REMOTE_ARTWORK_HOST,
+  MEDIA_REMOTE_TRACK_HOST,
 } from '../../shared/contracts/media-protocol';
 import type { ArtworkService } from './artwork-service';
 import {
   resolveTrackMediaResponse,
   type AudioProtocolDeps,
 } from './audio-stream-handler';
+import type { ConnectClientService } from './connect/connect-client';
 import type { PlaylistService } from './playlist-service';
 import type { ProfileService } from './profile-service';
 
@@ -20,6 +23,7 @@ export interface MediaProtocolDeps extends AudioProtocolDeps {
   artworkService?: ArtworkService;
   playlistService?: PlaylistService;
   profileService?: ProfileService;
+  connectClientService?: ConnectClientService;
 }
 
 /**
@@ -58,6 +62,12 @@ export function registerAudioProtocolHandler(deps: MediaProtocolDeps): void {
       }
       if (parsed.hostname === MEDIA_PROFILE_HOST && deps.profileService) {
         return deps.profileService.resolveProfileMediaHttpResponse(request);
+      }
+      if (parsed.hostname === MEDIA_REMOTE_TRACK_HOST && deps.connectClientService) {
+        return deps.connectClientService.resolveRemoteTrackMediaResponse(request);
+      }
+      if (parsed.hostname === MEDIA_REMOTE_ARTWORK_HOST && deps.connectClientService) {
+        return deps.connectClientService.resolveRemoteArtworkMediaResponse(request);
       }
     } catch {
       // Fall through to strict validator in resolveTrackMediaResponse

@@ -7,7 +7,6 @@ import {
   resolveNextNowPlayingModePatch,
   resolveSidebarAutoHideMode,
   resolveSidebarRevealedOnTransition,
-  STANDARD_ENTRY_IDLE_HIDE_MS,
 } from '../src/renderer/src/utils/animation-policy';
 import {
   MAX_PLAYLIST_NAME_LENGTH,
@@ -118,10 +117,10 @@ test('Phase 5.2.1B: Unified Focus Player sidebar auto-hide prevents pop-out acro
   assert.equal(resolveSidebarAutoHideMode('now-playing', 'standard'), 'standard-idle');
   assert.equal(resolveSidebarAutoHideMode('now-playing', 'focus'), 'focus-immediate');
 
-  // Entering Now Playing from outside shows briefly (3s orientation)
+  // Entering Now Playing from outside hides Sidebar immediately (Phase 6.1.1 IMP-05 — zero 3s flash)
   assert.deepEqual(resolveSidebarRevealedOnTransition('none', 'standard-idle', true), {
-    revealed: true,
-    scheduleHideMs: STANDARD_ENTRY_IDLE_HIDE_MS,
+    revealed: false,
+    scheduleHideMs: null,
   });
 
   // Entering Focus hides immediately

@@ -1,31 +1,34 @@
 # KNOWN_ISSUES.md — Theo dõi lỗi, Tồn đọng & Chống Regression
 
-- **Last Updated**: 2026-11-26T09:49+07:00
-- **Last Verified Checkpoint**: `PHASE-5.2.1-FINAL-UI-GUIDE-ABOUT-RC2-20261126`
-- **Verification Scope**: Toàn bộ Phase 5.1, Phase 5.2 & Phase 5.2.1 trên Windows (`win32 x64`, Electron `45.4.1`).
-- **Source References**: `docs/phase-5.2/PHASE_5.2_KNOWN_ISSUES.md`, `docs/phase-5.2/PHASE_5.2.1_DOCUMENTATION_SYNC_REPORT.md`
-- **Verification Status**: `RELEASE CANDIDATE - PENDING UAT`
+- **Last Updated**: 2026-11-28T21:16+07:00
+- **Last Verified Checkpoint**: `PHASE-6.5-RESOURCE-POWER-MANAGEMENT-RC9-20261128`
+- **Verification Scope**: Toàn bộ Phase 5.1–6.4 & **Phase 6.5 (`1.0.0-rc.9`)** trên Windows (`win32 x64`, Electron `45.4.1`).
+- **Source References**: [`docs/phase-6/PHASE_6.5_REPORT.md`](file:///G:/Source%20code%20DoReMi/docs/phase-6/PHASE_6.5_REPORT.md), [`docs/phase-6/PHASE_6.3_TO_6.5_STABILIZATION_BACKLOG.md`](file:///G:/Source%20code%20DoReMi/docs/phase-6/PHASE_6.3_TO_6.5_STABILIZATION_BACKLOG.md), [`docs/phase-6/PHASE_6.5_WINDOWS_UAT.md`](file:///G:/Source%20code%20DoReMi/docs/phase-6/PHASE_6.5_WINDOWS_UAT.md)
+- **Verification Status**: `RELEASE CANDIDATE - AUTOMATED RESOURCE, POWER & SOAK VERIFIED · PACKAGED RC.9 VERIFIED · PHYSICAL COMBINED UAT PENDING`
 
 ---
 
-## 1. Trạng thái các vấn đề / quan sát hiện tại (`OBS-*` / `ISS-OPEN-*`)
+## 1. Trạng thái các vấn đề / quan sát hiện tại (`STAB-*` / `OBS-*` / `ISS-OPEN-*` / `UI-BACKLOG-*`)
 
 | Issue ID | Mô tả & Root Cause | Status | Files / Phạm vi | Hướng xử lý tiếp theo |
 |---|---|---|---|---|
-| `OBS-51-01` | Sự cố double-click điều hướng `Library` thoáng gặp cuối Phase 5.1 (không tái hiện lại được). | `INTERMITTENT - NOT REPRODUCED` | `LibraryPage.tsx`, `use-windowed-slice.ts`, `queue-virtualization.ts` | Giữ nguyên trạng thái theo nguyên tắc trung thực; đã có test clamping biên `0..50,000`. |
-| `ISS-OPEN-03` | `resources/codecs/` chỉ giữ `manifest.json` (`expectedSha256: null`), không bundle nhị phân bên thứ ba để bảo đảm tuân thủ bản quyền GPL/LGPL/Proprietary. | `BY_DESIGN` | `resources/codecs/manifest.json`, `scripts/verify-codecs.mjs`, `THIRD_PARTY_NOTICES.md` | Trung thực hiển thị `Isolated` trong `Giới thiệu` & `Hướng dẫn sử dụng`; hỗ trợ kiểm tra on-demand tùy chọn. |
-| `ISS-OPEN-07` | Host Node `v22.12.0` (`N-API 9`) không load được `better-sqlite3@13.2.0` (`N-API 10`); đã có preflight guard. | `MITIGATED` | `scripts/run-tests-node.mjs`, `package.json` | Luôn dùng `npm.cmd run test:electron`. |
-| `ISS-OPEN-ENV-SYMLINK` | Trong môi trường sandbox Windows không elevation, 2 bài test tạo kernel symlink/junction (`Phase 4.5C`) tự động `SKIP` do `EPERM` (test mô phỏng `FsPathSafetyOps` vẫn chạy PASS). | `PLATFORM_ENV_SKIP` | `tests/phase45-codec-security.test.ts` | Có thể chạy không giới hạn quyền tạo symlink nếu cần xác nhận kernel OS link trực tiếp. |
-| `ISS-IPC-BACKUP-UI` | Lõi WAL-safe `createDatabaseSnapshotBackup` & `restoreDatabaseBackupSafely` đã hoàn chỉnh; chưa gắn UI Backup/Restore mới trong Settings để giữ gọn phạm vi RC. | `CORE_READY / UI_DEFERRED` | `src/main/database/integrity.ts`, `USER_DATA_AND_BACKUP.md` | Bổ sung UI Settings ở bản bảo trì hoặc Phase 6 nếu user yêu cầu. |
-| `ISS-UAT-GUI` | Cần người dùng kiểm thử trực quan các bổ sung Phase 5.2.1 & vận hành thực tế trên Windows qua `v1.0.0-rc.2`. | `PENDING_USER_UAT` | `release/v1.0.0-rc.2/*`, `qa/*.cmd`, `docs/phase-5.2/PHASE_5.2_WINDOWS_UAT.md` | User mở `qa/DoReMi-QA-Launch.cmd` / `DoReMi-1.0.0-rc.2-x64-portable.exe` và xác nhận. |
+| `UI-BACKLOG-01` | **Now Playing Vinyl Rotation on Remote Playback**: Đĩa than trong `NowPlayingPage` / Focus Vinyl chưa quay đúng trạng thái khi phát nhạc từ xa (kể cả ở chế độ High Performance Mode). | `DEFERRED_UI_FIX_PHASE` *(Target Phase 7.3 — Không sửa trong Phase 6.5)* | `NowPlayingPage.tsx`, Focus Vinyl rotation | Triển khai riêng trong Phase 7.3. |
+| `UI-BACKLOG-02` | **Source-Aware Main Library Integration**: Tích hợp duyệt Remote Music Library từ mục Server vào giao diện **Thư viện (Library)** chính với bộ lọc nguồn thống nhất: **All Sources / Local Sources / Remote Server Sources**, chia sẻ search/Album/Nghệ sĩ/Playlist/Queue (không sao chép file remote vào SQLite cục bộ). | `DEFERRED_UI_FIX_PHASE` *(Target Phase 7.2 — Không sửa trong Phase 6.5)* | `LibraryPage.tsx`, `connect-store-core.ts`, `ui-store.ts` | Thiết kế và triển khai trong Phase 7.2. |
+| `UI-BACKLOG-03` | **Lightweight Real Host Resource Gauges**: Hiển thị chỉ số tài nguyên Host thực tế nhẹ (CPU, RAM, tốc độ upload, số Client đang kết nối, tách bạch rõ phạm vi local/LAN/Remote). | `BACKEND_READY_UI_DEFERRED` *(Target Phase 7.4 — API `HostResourceSampler` đã xong ở Phase 6.5)* | `ServerPage.tsx`, `resource-sampler.ts` | Triển khai đồng hồ UI nhẹ trong Phase 7.4. |
+| `UI-BACKLOG-04` | **Minimalist Server UI Redesign**: Thiết kế lại giao diện Server theo hướng tối giản hơn, đưa các chi tiết kỹ thuật/bảo mật/mạng chuyên sâu vào mục Nâng cao (Advanced). | `DEFERRED_UI_FIX_PHASE` *(Target Phase 7.4 — Không sửa trong Phase 6.5)* | `ServerPage.tsx` | Triển khai thiết kế lại trong Phase 7.4. |
+| `UI-BACKLOG-05` | **Lyrics Compatibility & Synchronization Investigation**: Điều tra lỗi tương thích & đồng bộ lời bài hát thực tế (`Love Option` unsynced trên cả Host & Client so với `DNA` synced và `Love Option Instrumental`), giữ nguyên thứ tự ưu tiên Custom > External LRC > Embedded. | `DEFERRED_UI_FIX_PHASE` *(Target Phase 7.3 — Không sửa trong Phase 6.5)* | `lyrics-service.ts`, lyrics parser & Remote/Host sync UI | Điều tra với file mẫu thực tế trong Phase 7.3. |
+| `STAB-P63-65-PHYSICAL-UAT` | Đã kiểm chứng tự động đầy đủ Remote HTTPS, Smart Handover, Power Blocker (`powerSaveBlocker.isStarted()`) và Soak `118.93s`, nhưng chưa chạy UAT thực địa hợp nhất (Internet Tailscale Funnel thật, 2 máy Wi-Fi ↔ Hotspot 4G/5G, `powercfg /requests` quyền Admin & Sleep/Resume vật lý, đo trên laptop `i5-1035G1`, ngâm 2h/8h). | `PENDING_PHYSICAL_UAT` | `docs/phase-6/PHASE_6.5_WINDOWS_UAT.md`, `PHASE_6.3_TO_6.5_STABILIZATION_BACKLOG.md` | Thực hiện trong Đợt Rà soát Hợp nhất Phase 6.3–6.5 trên `release/v1.0.0-rc.9/`. |
+| `ISS-P65-PUBLIC-WOL` | Không thể đánh thức máy tính Windows đã vào Sleep/Shutdown từ Internet công cộng qua Tailscale Funnel nếu không có phần cứng phụ luôn bật trong mạng nhà. | `BY_DESIGN_ARCHITECTURAL_LIMIT` | `PHASE_6.5_POWER_MANAGEMENT.md` | Giải quyết bằng chế độ giữ thức tường minh (`keep-awake-streaming` / `keep-awake-host-on`). |
+| `ISS-P63-RELAY-BANDWIDTH` | Tailscale Funnel trên gói miễn phí chịu giới hạn băng thông relay của Tailscale và tiêu tốn dữ liệu di động 4G/5G khi stream file Lossless/Hi-Res lớn. | `BY_DESIGN_UPSTREAM_LIMIT` | Tailscale Edge Relay / Remote Streaming | Đã cảnh báo rõ trong User Guide Chương 13; tối ưu đệm đọc trước ở Phase 6.6. |
+| `OBS-51-01` / `ISS-OPEN-03` / `ISS-OPEN-07` / `ISS-P61-FIREWALL-LAN` | Quan sát lịch sử `Library`, codec manifest cô lập, preflight `test:electron`, và cấu hình Private Network Firewall cho mDNS. | `MITIGATED / BY_DESIGN` | Các phân hệ tương ứng | Giữ nguyên theo dõi trung thực. |
 
 ---
 
-## 2. Lỗi đã khắc phục ở Phase 5.2 & 5.2.1 *(Cấm regression)*
+## 2. Lỗi & Điểm nghẽn đã khắc phục từ Phase 6.1.1 -> Phase 6.5 *(Cấm regression)*
 
 | Issue ID | Hạng mục & Vấn đề gốc | Fix Summary | Bằng chứng & Tests | Phase |
 |---|---|---|---|---|
-| `ISS-FIX-521B` | Chuyển `Focus Vinyl -> Standard/Lyrics` làm Sidebar bật lại 3s (`standard-idle`) và dịch nút `"Quay lại"` +76px sang phải. | Thêm `resolveSidebarRevealedOnTransition()` + `resolveNextNowPlayingModePatch()` giữ Sidebar ẩn đồng nhất trong `now-playing`, chỉ khôi phục khi rời trang player. | `tests/phase521-ui-guide-sync.test.ts` | Phase 5.2.1B |
-| `ISS-FIX-52A` | Thiếu handler `uncaughtException`, `unhandledRejection`, `render-process-gone`, `child-process-gone` và React ErrorBoundary. | Bổ sung `runtime-resilience.ts` + `main/index.ts` + `AppErrorBoundary.tsx`. | `tests/phase52-stability-integrity.test.ts`, `smoke:electron` | Phase 5.2A |
-| `ISS-FIX-52B` | Chưa kiểm `PRAGMA integrity_check` / `foreign_key_check` khi mở DB và chưa có SQLite Online Backup. | Bổ sung `database/integrity.ts`, `verifyDatabaseIntegrity()`, `wal_checkpoint(PASSIVE)`. | `tests/phase52-stability-integrity.test.ts` | Phase 5.2B |
-| `ISS-FIX-52D` | `computeQueueWindowSlice()` chưa kẹp `scrollOffsetPx <= maxScrollPx` khi danh sách thu hẹp. | Kẹp `clampedScroll <= maxScrollPx` và `startIndex <= endIndex`. | `tests/phase52-security-regression.test.ts` | Phase 5.2D |
+| `P65-TLS-SQLITE-CHURN` | Mỗi yêu cầu `HTTP 206 Range` mở mới kết nối TLS (`agent: false`) và ghi SQLite `touchDeviceActivity`, cộng view `Buffer` chia sẻ giữ bộ nhớ WASM ALAC. | `ScopedHttpsAgentPool` kiểm tra lại SPKI (`-81.5%` TLS handshakes), gom nhịp ghi SQLite `30s` (`-93.9%` writes), bản sao `Buffer.from(decodedChunks[0])` + tự dọn `20s`/`60s`, giữ cache dương tính `ready` `5s` cho Tailscale CLI. | `tests/phase65-resource-lifecycle.test.ts`, `qa/logs/phase65-benchmark-after.json` | Phase 6.5 |
+| `P65-AUTO-ENROLL-CACHE` | Ghép nối tự động `autoApproveSingleUse: true` duyệt thiết bị đồng bộ nhưng chưa xóa ngay `cachedDevicesRaw`. | Xóa `cachedDevicesRaw` ngay khi `status === 'approved'` kèm TTL ngắn khi chạy. | `tests/phase65-power-management.test.ts` | Phase 6.5 |
+| `P64-MDNS-SPOOF-DOS` & `P64-MBB-STREAM-DRAIN` | Chống giả mạo mDNS khóa phiên & cửa sổ thoát êm `600 ms` cho `Make-Before-Break` (`?ho=<seq>`). | Bỏ qua ứng viên sai SPKI (`0` leak) & kiểm chứng `X-DoReMi-Source-Revision`. | `tests/phase64-*.test.ts` | Phase 6.4 |
+| `P63-ROTATE-GRACE` & `BUG-P613-01` & `P0-612-*` | Thu hồi token cũ tức thì khi xoay vòng, giữ trạng thái tìm kiếm Remote Library, khôi phục đa định dạng ALAC/FLAC/WAV/AAC. | Store-owned search, lane isolation, Range ALAC WASM decoder. | `tests/phase63-*`, `phase613-*`, `phase612-*` | Phase 6.1.2–6.3 |

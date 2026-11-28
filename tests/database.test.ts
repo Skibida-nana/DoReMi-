@@ -181,3 +181,100 @@ test('SQLite persists tracks and roots across close/reopen and preserves UUID on
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('SQLite creates automatic backup and preserves RC.6 v9 Connect data when migrating v9 -> v10', () => {
+  const { dir, dbPath } = createTempDbPath();
+  try {
+    const now = new Date().toISOString();
+    const rawDb = new Database(dbPath);
+    try {
+      rawDb.exec(`
+        CREATE TABLE schema_migrations (
+          version INTEGER PRIMARY KEY,
+          name TEXT NOT NULL,
+          applied_at TEXT NOT NULL
+        );
+      `);
+      for (const m of MIGRATIONS.slice(0, 9)) {
+        m.up(rawDb);
+        rawDb
+          .prepare('INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)')
+          .run(m.version, m.name, now);
+      }
+
+      rawDb
+        .prepare(
+          `INSERT INTO library_roots (id, original_path, normalized_path, added_at, status)
+           VALUES (?, ?, ?, ?, 'available')`,
+        )
+        .run('root-rc6-1', 'D:\\RC6Music', 'd:\\rc6music', now);
+
+      rawDb
+        .prepare(
+          `INSERT INTO connect_host_config (id, enabled, auto_start, display_name, port, bind_address, max_active_clients, max_requests_per_device, max_global_requests, updated_at)
+           VALUES (1, 1, 0, 'My RC6 Desktop', 48620, 'auto-private', 3, 4, 12, ?)`,
+        )
+        .run(now);
+
+      rawDb
+        .prepare(
+          `INSERT INTO connect_shared_sources (id, root_id, enabled, added_at)
+           VALUES (?, ?, 1, ?)`,
+        )
+        .run('src-rc6-1', 'root-rc6-1', now);
+
+      rawDb
+        .prepare(
+          `INSERT INTO connect_authorized_devices (device_id, display_name, platform, auth_state, token_hash, token_salt, enrolled_at)
+           VALUES (?, ?, 'win32', 'authorized', ?, ?, ?)`,
+        )
+        .run('dev-rc6-1', 'RC6 Laptop', 'hash-abc', 'salt-xyz', now);
+
+      rawDb
+        .prepare(
+          `INSERT INTO connect_remembered_hosts (host_id, display_name, last_address, port, pinned_fingerprint, short_fingerprint, device_id, api_version, credential_ref, created_at, updated_at)
+           VALUES (?, ?, '192.168.1.50', 48620, 'sha256:deadbeef', 'deadbeef', 'dev-self-1', '1', 'cred-ref-1', ?, ?)`,
+        )
+        .run('host-rc6-1', 'Living Room Host', now, now);
+    } finally {
+      rawDb.close();
+    }
+
+    const conn = openLibraryDatabase(dbPath);
+    try {
+      assert.ok(conn.backupPath, 'Expected automatic pre-migration SQLite backup before v9 -> v10 upgrade');
+      assert.equal(fs.existsSync(conn.backupPath), true);
+
+      const applied = conn.db
+        .prepare('SELECT version, name FROM schema_migrations ORDER BY version ASC')
+        .all() as Array<{ version: number; name: string }>;
+      assert.equal(applied.length, MIGRATIONS.length);
+      assert.equal(applied[applied.length - 1].version, 10);
+
+      const hostCfg = conn.db.prepare('SELECT * FROM connect_host_config WHERE id = 1').get() as any;
+      assert.equal(hostCfg.display_name, 'My RC6 Desktop');
+      assert.equal(hostCfg.remote_provider, 'tailscale-funnel');
+      assert.equal(hostCfg.remote_public_port, 443);
+      assert.equal(hostCfg.remote_mount_path, '/doremi-connect');
+      assert.equal(hostCfg.remote_endpoint_generation, 1);
+
+      const sharedSrc = conn.db.prepare('SELECT * FROM connect_shared_sources WHERE id = ?').get('src-rc6-1') as any;
+      assert.equal(sharedSrc.root_id, 'root-rc6-1');
+
+      const dev = conn.db.prepare('SELECT * FROM connect_authorized_devices WHERE device_id = ?').get('dev-rc6-1') as any;
+      assert.equal(dev.auth_state, 'authorized');
+      assert.equal(dev.token_hash, 'hash-abc');
+      assert.equal(dev.remote_access_enabled, 0);
+      assert.equal(dev.remote_token_hash, '');
+
+      const remHost = conn.db.prepare('SELECT * FROM connect_remembered_hosts WHERE host_id = ?').get('host-rc6-1') as any;
+      assert.equal(remHost.last_address, '192.168.1.50');
+      assert.equal(remHost.preferred_transport, 'lan-direct');
+      assert.equal(remHost.credential_ref, 'cred-ref-1');
+    } finally {
+      conn.close();
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

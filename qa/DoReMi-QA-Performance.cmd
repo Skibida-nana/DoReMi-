@@ -2,7 +2,7 @@
 setlocal EnableExtensions
 pushd "%~dp0.."
 
-title DoReMi v1.0.0-rc.2 - QA Performance Benchmark
+title DoReMi v1.0.0-rc.9 - QA Performance & Resource Benchmark
 
 if exist "D:\Dowload\node-v22.12.0-win-x64\node-v22.12.0-win-x64\node.exe" (
   set "PATH=D:\Dowload\node-v22.12.0-win-x64\node-v22.12.0-win-x64;%PATH%"

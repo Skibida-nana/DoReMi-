@@ -1,3 +1,4 @@
+import { compareAlbumTracksCanonical, parseAlbumOrdinal } from './album-sort';
 import {
   extractFileNameFromPath,
   extractParentFolderPath,
@@ -43,16 +44,6 @@ export interface FolderBreadcrumbItem {
   folderPath: string;
 }
 
-function getEffectiveDiscNumber(track: FolderTrackSortable): number {
-  const d = track.disc_number ?? track.discNumber;
-  return typeof d === 'number' && Number.isFinite(d) && d > 0 ? d : 1;
-}
-
-function getEffectiveTrackNumber(track: FolderTrackSortable): number {
-  const n = track.track_number ?? track.trackNumber;
-  return typeof n === 'number' && Number.isFinite(n) && n > 0 ? n : Number.MAX_SAFE_INTEGER;
-}
-
 export function getEffectiveFileName(track: FolderTrackSortable): string {
   return track.file_name || extractFileNameFromPath(track.original_path) || track.title;
 }
@@ -61,19 +52,21 @@ export function compareTracksByTrackNumber(
   a: FolderTrackSortable,
   b: FolderTrackSortable,
 ): number {
-  const discDiff = getEffectiveDiscNumber(a) - getEffectiveDiscNumber(b);
-  if (discDiff !== 0) {
-    return discDiff;
-  }
-  const numDiff = getEffectiveTrackNumber(a) - getEffectiveTrackNumber(b);
-  if (numDiff !== 0) {
-    return numDiff;
-  }
-  const titleCmp = naturalCompare(a.title, b.title);
-  if (titleCmp !== 0) {
-    return titleCmp;
-  }
-  return naturalCompare(getEffectiveFileName(a), getEffectiveFileName(b));
+  return compareAlbumTracksCanonical({
+    id: a.id,
+    title: a.title,
+    disc_number: parseAlbumOrdinal(a.disc_number ?? a.discNumber),
+    track_number: parseAlbumOrdinal(a.track_number ?? a.trackNumber),
+    file_name: a.file_name,
+    original_path: a.original_path,
+  }, {
+    id: b.id,
+    title: b.title,
+    disc_number: parseAlbumOrdinal(b.disc_number ?? b.discNumber),
+    track_number: parseAlbumOrdinal(b.track_number ?? b.trackNumber),
+    file_name: b.file_name,
+    original_path: b.original_path,
+  });
 }
 
 export function compareTracksByFileName(

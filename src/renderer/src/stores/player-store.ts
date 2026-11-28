@@ -21,7 +21,11 @@ import {
   findActiveLyricGroupIndex,
   type TimedLyricGroup,
 } from '../../../shared/utils/lyrics-parser';
-import { getAudioEngine } from '../player/audio-engine';
+import {
+  getAudioEngine,
+  type AutoContinueResolver,
+  type ExternalTrackResolver,
+} from '../player/audio-engine';
 
 let externalSessionListener: ((session: ListeningSessionInput) => void) | null = null;
 let externalEntryActivatedListener:
@@ -71,6 +75,23 @@ export function syncEngineQueue(tracks: TrackRecord[]): void {
 }
 
 export const playerActions = {
+  setExternalTrackResolver: (resolver: ExternalTrackResolver | undefined) =>
+    engine.setExternalTrackResolver(resolver),
+  setAutoContinueResolver: (resolver: AutoContinueResolver | undefined) =>
+    engine.setAutoContinueResolver(resolver),
+  setAutoContinueBlocker: (fn: (() => boolean) | undefined) =>
+    engine.setAutoContinueBlocker(fn),
+  setRemoteHandoverPendingPredicate: (fn: ((trackId: string) => boolean) | undefined) =>
+    engine.setRemoteHandoverPendingPredicate(fn),
+  recoverCurrentTrackTransport: (options: {
+    expectedTrackId: string;
+    targetTimeSeconds?: number;
+    shouldPlay?: boolean;
+    handoverSeq: number;
+  }) => engine.recoverCurrentTrackTransport(options),
+  setAutoContinueEnabled: (enabled: boolean) => engine.setAutoContinueEnabled(enabled),
+  stopPlayback: (reason: 'user-stop' | 'sleep-timer' = 'user-stop') => engine.stop(reason),
+  getPlaybackState: () => engine.getPlaybackState(),
   play: (trackId: string) => engine.play(trackId),
   playQueueEntry: (entry: PlaybackQueueEntry) =>
     engine.playQueueEntry(entry, { fromAutoAdvance: false }),

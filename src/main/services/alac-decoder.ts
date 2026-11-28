@@ -6,7 +6,7 @@ export const MAX_ALAC_FILE_BYTES = 256 * 1024 * 1024; // 256 MB safety cap
 const MAX_MOOV_SCAN_BYTES = 16 * 1024 * 1024; // 16 MB metadata box scan cap
 const MAX_OPEN_ALAC_TRACKS = 2; // Bounded LRU cache (current + previous/next)
 const IDLE_EVICTION_MS = 30_000; // 30s idle cleanup
-const WAV_HEADER_BYTES = 44;
+export const WAV_HEADER_BYTES = 44;
 const STREAM_CHUNK_SAMPLES = 16_384; // ~0.37s @ 44.1kHz (~64KB-96KB per pull)
 
 export interface Mp4AudioCodecProbe {
@@ -23,7 +23,7 @@ const UNKNOWN_PROBE: Mp4AudioCodecProbe = {
   channels: null,
 };
 
-function readUint64Safe(buf: Buffer, offset: number): number {
+export function readUint64Safe(buf: Buffer, offset: number): number {
   const high = buf.readUInt32BE(offset);
   const low = buf.readUInt32BE(offset + 4);
   return high * 0x1_0000_0000 + low;
@@ -173,7 +173,7 @@ function readMediaHandlerType(buf: Buffer, start: number, end: number): string |
   return null;
 }
 
-function scanMoovContainer(buf: Buffer, start: number, end: number): Mp4AudioCodecProbe | null {
+export function scanMoovContainer(buf: Buffer, start: number, end: number): Mp4AudioCodecProbe | null {
   let offset = start;
   let firstAudioTrackHit: Mp4AudioCodecProbe | null = null;
 
